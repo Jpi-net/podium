@@ -416,6 +416,10 @@ export class Effects {
     })
   }
 
+  static light(timeOfDay: TimeOfDay): number {
+    return Effects.LIGHT[timeOfDay] ?? 1
+  }
+
   private static isDark(timeOfDay: TimeOfDay): boolean {
     return timeOfDay === 'evening' || timeOfDay === 'night'
   }

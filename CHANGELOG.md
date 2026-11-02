@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Changed
+
+- The panel's orchestrator now sits at a desk in an office: the sky shows through a window with curtains, above a panelled wall and a parquet floor with a plant, a bookcase and a rug; the desk lamp lights up in the evening and at night.
+- New icon: the orchestrator wired to its sub-agents.
+- The empty-flow hint reads "Waiting for agents…".
+
 ## [0.1.1] - 2026-11-02
 
 ### Changed

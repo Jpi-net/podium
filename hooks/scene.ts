@@ -1,5 +1,6 @@
 import type { FlowAgent, FlowEvent, FlowMain, FlowStatus } from '../types'
 import { Canvas, type Encoded, type Point, type RenderMode, type Rgb } from './canvas'
+import { Office } from './office'
 import { Effects, type Ambience, type ExitStatus, type Obstacle, type Sky } from './effects'
 import { WeatherFx } from './weather'
 import { Robots, type OrchestratorReaction, type OrchestratorState, type RobotMood } from './robots'
@@ -220,6 +221,10 @@ export class Scene {
     const labels = Scene.labels(canvas, center, orchestratorScale, placed, state, input, ordinals)
     const obstacles = Scene.obstacles(canvas, center, orchestratorScale, placed, labels, input)
     Effects.background(canvas, input.frame, input.at, input.ambience, obstacles)
+    const bust = Scene.orchestratorHalf(canvas)
+    const room = Office.room(canvas, center.x, center.y + bust.y, bust.x)
+    const light = Effects.light(input.ambience.timeOfDay)
+    Office.back(canvas, room, light, input.frame)
     Scene.orbits(canvas, center, placed, input.frame)
 
     for (const p of placed) Scene.shadow(canvas, center, p)
@@ -246,6 +251,7 @@ export class Scene {
     } else Effects.hat(canvas, center.x, top, hatWidth, input.ambience, input.frame, 0.5)
     const pulse = Scene.verifPulse(input.events, input.at)
     if (pulse) Scene.shockwave(canvas, center, half, pulse)
+    Office.desk(canvas, room, light, light < 0.7, input.frame)
     if (state === 'asleep') {
       const half = (Scene.AVATAR_WIDTH * Robots.ORCHESTRATOR_SCALE * orchestratorScale) / 2
       Effects.sleeping(canvas, center.x + half * 0.45, top + 1, input.frame)
@@ -267,7 +273,7 @@ export class Scene {
     const visibleCount = Scene.visibleAt(input.agents, input.at).filter(a => Scene.isOnStage(a, input.at)).length
     if (visibleCount === 0) {
       const row = Math.min(input.rows - 2, Math.floor((center.y + (Scene.AVATAR_HEIGHT * Robots.ORCHESTRATOR_SCALE * orchestratorScale) / 2) / 2) + 2)
-      Scene.centered(canvas, center.x, row, "En attente d'agents…", Theme.MUTED)
+      Scene.centered(canvas, center.x, row, 'Waiting for agents…', Theme.MUTED)
     }
     if (overflow) labels.push(overflow)
     return { encoded: canvas.encode(), labels, obstacles }

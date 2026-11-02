@@ -1418,9 +1418,9 @@ test('the panel does not open by itself in a project without a maestro manifest'
 
   // Act
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
-  await $.prompt.submit({ text: 'hello' })
+  await $.prompt.submit({ wait: false, origin: { kind: 'composer' }, text: 'hello' })
   const before = sink.opens ?? 0
-  const answer = await $.command.run({ command: 'maestro-stage', args: '' })
+  const answer = await $.command.run({ command: 'maestro-stage', args: '' } as never)
 
   // Assert
   expect(before).toBe(0)
