@@ -1,6 +1,6 @@
 ---
 name: feat
-description: Implements a new maestro feature end to end - branch, context, validated plan, parallel experts on disjoint files (panel, setup skill, tests, docs, manifests), verification, reviews, commits per layer, push and pull request. Use when the user types /feat, or asks to implement a feature, a change or a GitHub issue.
+description: Implements a new podium feature end to end - branch, context, validated plan, parallel experts on disjoint files (panel, setup skill, tests, docs, manifests), verification, reviews, commits per layer, push and pull request. Use when the user types /feat, or asks to implement a feature, a change or a GitHub issue.
 argument-hint: "<#issue | description> [context]"
 ---
 

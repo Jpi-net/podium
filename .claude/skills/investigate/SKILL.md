@@ -1,6 +1,6 @@
 ---
 name: investigate
-description: Investigates a maestro bug (panel module, generated hooks, setup templates) and returns an evidence-based explanation (root cause, data path, origin of the regression, reproduction, fix options) without changing any code. Use when the user types /investigate, or describes a bug or pastes an error and asks to understand it rather than fix it.
+description: Investigates a podium bug (panel module, generated hooks, setup templates) and returns an evidence-based explanation (root cause, data path, origin of the regression, reproduction, fix options) without changing any code. Use when the user types /investigate, or describes a bug or pastes an error and asks to understand it rather than fix it.
 argument-hint: "<#issue | bug description> [stack trace]"
 ---
 

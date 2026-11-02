@@ -11,8 +11,8 @@ paths:
 - `plugin/tsconfig.json` extends `./.claude-plugin/types/tsconfig.json`, written by the engine on load (gitignored, never edited).
 
 ## Structure
-- `plugin/hooks/register.tsx`: entry point; commands, event hooks (`tool.call`, `prompt.submit`, `agent.spawn`…), the `/maestro-stage` panel. Internal classes `Runtime` (state, `Runtime.io` wrapping `$`, `Runtime.graphCache`), `Flow`, `View`, `Recap`.
-- `plugin/hooks/project.ts`: the `Manifest` type and reading of `.claude/maestro.json` and the project's `.claude/`; `plugin/hooks/rules.ts`: rule checks.
+- `plugin/hooks/register.tsx`: entry point; commands, event hooks (`tool.call`, `prompt.submit`, `agent.spawn`…), the `/podium-stage` panel. Internal classes `Runtime` (state, `Runtime.io` wrapping `$`, `Runtime.graphCache`), `Flow`, `View`, `Recap`.
+- `plugin/hooks/project.ts`: the `Manifest` type and reading of `.claude/podium.json` and the project's `.claude/`; `plugin/hooks/rules.ts`: rule checks.
 - Scene: `plugin/hooks/scene.ts` composes `office.ts`, `colleagues.ts`, `robots.ts`, `weather.ts`, `night.ts`, `festive.ts`, `hats.ts`, `accessories.ts`, `effects.ts`, `avatar.ts` on a `Canvas` (`canvas.ts`), with `Raster`/`Sprite`/`Motion` (`sprite.ts`), `font.ts`, `theme.ts`.
 - `plugin/types/index.d.ts`: exported flow types and `declare module 'claude-code' { interface PluginState { … } }`. Every `$.state` key is declared there; `claude plugin validate plugin` checks it.
 - Dependency direction: `register.tsx` imports the scene and project modules; scene modules never import `register.tsx` and never touch `$`.

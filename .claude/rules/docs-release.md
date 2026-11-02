@@ -14,7 +14,7 @@ paths:
 # Docs, release, plugin manifests and CI
 
 ## Structure
-- `plugin/README.md`: the full user documentation of `/maestro` and `/maestro-stage`, shipped with the plugin and shown by the plugin directory; links outside `plugin/` use absolute GitHub URLs. `README.md` at the root: the GitHub landing page (pitch, install, link to `plugin/README.md`). `CONTRIBUTING.md`: develop, checks, layout table, conventions. `SECURITY.md`: reporting. All owned by doc-writer.
+- `plugin/README.md`: the full user documentation of `/podium` and `/podium-stage`, shipped with the plugin and shown by the plugin directory; links outside `plugin/` use absolute GitHub URLs. `README.md` at the root: the GitHub landing page (pitch, install, link to `plugin/README.md`). `CONTRIBUTING.md`: develop, checks, layout table, conventions. `SECURITY.md`: reporting. All owned by doc-writer.
 - `CHANGELOG.md`: Keep a Changelog 1.1.0 + SemVer. `## [Unreleased]` on top, then `## [x.y.z] - YYYY-MM-DD`, sections `### Added`, `### Changed`, `### Fixed`, `### Removed`, link refs at the bottom.
 - `plugin/assets/icon.png`: 1024x1024 pixel art, referenced by `plugin.json` (`"icon"`).
 - `plugin/.claude-plugin/plugin.json`: name, `version` (single source of the version), description, author, `icon`, `types` (`./types/index.d.ts`). `.claude-plugin/marketplace.json`: makes the repository installable as a marketplace (no version field). `plugin/.claude-plugin/types/` is engine output, gitignored, never edited. Owned by devops.

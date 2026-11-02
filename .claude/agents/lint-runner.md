@@ -1,6 +1,6 @@
 ---
 name: lint-runner
-description: Runs maestro's CI-equivalent verification (claude plugin validate, claude plugin test, node --check of the hook templates) and reports exact pass/fail. Use in the verification phase of a feature or a fix, or after any implementation wave.
+description: Runs podium's CI-equivalent verification (claude plugin validate, claude plugin test, node --check of the hook templates) and reports exact pass/fail. Use in the verification phase of a feature or a fix, or after any implementation wave.
 tools: Read, Grep, Glob, Bash
 model: haiku
 effort: low

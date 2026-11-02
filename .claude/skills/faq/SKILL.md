@@ -1,6 +1,6 @@
 ---
 name: faq
-description: Answers a question about maestro (how /maestro generates a setup, a template or placeholder, a generated hook, the panel module, the manifest, why it works this way) with a structured, sourced answer. Read-only. Use when the user types /faq or asks how, why or where something works without asking for a change.
+description: Answers a question about podium (how /podium generates a setup, a template or placeholder, a generated hook, the panel module, the manifest, why it works this way) with a structured, sourced answer. Read-only. Use when the user types /faq or asks how, why or where something works without asking for a change.
 argument-hint: "<question>"
 ---
 

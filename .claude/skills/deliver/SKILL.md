@@ -1,6 +1,6 @@
 ---
 name: deliver
-description: Shared final phases of /feat, /fix and /pr-comments on maestro - CI-equivalent verification (claude plugin validate, claude plugin test, node --check on hook templates) and reviews in one parallel wave, fix loop, commits per layer, push and pull request with gh. Invoked by the feat, fix and pr-comments commands.
+description: Shared final phases of /feat, /fix and /pr-comments on podium - CI-equivalent verification (claude plugin validate, claude plugin test, node --check on hook templates) and reviews in one parallel wave, fix loop, commits per layer, push and pull request with gh. Invoked by the feat, fix and pr-comments commands.
 user-invocable: false
 ---
 

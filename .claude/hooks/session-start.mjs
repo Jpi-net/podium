@@ -57,7 +57,7 @@ if (stage === 'genesis') {
     const order = ['kickoff', 'stack', 'foundations', 'feature'].filter(role => roles[role]).map(role => `/${roles[role]}`);
 
     if (order.length > 0) {
-        lines.push(`This project is being created. Commands in order: ${order.join(' → ')}. Once the stack is chosen and code exists, run /maestro again.`);
+        lines.push(`This project is being created. Commands in order: ${order.join(' → ')}. Once the stack is chosen and code exists, run /podium again.`);
     }
 }
 

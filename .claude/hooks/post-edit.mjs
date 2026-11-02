@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, sep } from 'node:path';
-import { feedback, git, gitRaw, pattern, projectDir, readInput, run, setting } from './lib.mjs';
+import { feedback, git, gitRaw, pattern, projectDir, readInput, runFile, setting } from './lib.mjs';
 
 const TEXT_EXTENSIONS = new Set(['.cs', '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.vue', '.svelte', '.html', '.css', '.scss', '.json', '.sql', '.md', '.yml', '.yaml', '.xml', '.py', '.go', '.rs', '.java', '.kt', '.rb', '.php', '.sh', '.ps1']);
 const LINE_COMMENT = {
@@ -58,7 +58,7 @@ if (relativePath.startsWith('.claude/')) {
     }
 
     if (relativePath.endsWith('.mjs')) {
-        const check = run(`node --check "${filePath}"`, root, 15000);
+        const check = runFile(process.execPath, ['--check', filePath], root, 15000);
 
         if (!check.ok) {
             feedback(`Syntax error in ${relativePath}:\n${check.output.split('\n').slice(0, 8).join('\n')}`);

@@ -1,6 +1,6 @@
-# maestro
+# podium
 
-A Claude Code plugin, published from `plugin/` (the repository root is its marketplace and this development setup, neither is shipped). `/maestro` (the skill in `plugin/skills/setup/`) builds an orchestrated `.claude/` for any repository; `/maestro-stage` (the TypeScript hooks module in `plugin/hooks/`, run by the Claude Code plugin engine, entry `plugin/hooks/register.tsx`) draws a live pixel-art panel of the flow. No package.json and no build step: the engine loads the module directly.
+A Claude Code plugin, published from `plugin/` (the repository root is its marketplace and this development setup, neither is shipped). `/podium` (the skill in `plugin/skills/setup/`) builds an orchestrated `.claude/` for any repository; `/podium-stage` (the TypeScript hooks module in `plugin/hooks/`, run by the Claude Code plugin engine, entry `plugin/hooks/register.tsx`) draws a live pixel-art panel of the flow. No package.json and no build step: the engine loads the module directly.
 
 ## Language
 
@@ -37,8 +37,8 @@ Path-scoped rules in `.claude/rules/` load automatically when matching files are
 - `/faq <question>`: answer about the code base.
 - `/review-pr <number>`: review a pull request.
 - `/pr-comments <number>`: handle review comments.
-- `/maestro`: update this setup.
-- `/maestro-stage`: open the panel.
+- `/podium`: update this setup.
+- `/podium-stage`: open the panel.
 
 - The main thread orchestrates: plan (with the architect or the debugger when design or root cause matters) → experts in parallel on **disjoint file partitions** → verification by `lint-runner` → reviews in parallel → commits. Without a command, the same orchestration applies to any non-trivial request; trivial requests (one-line edit, question) are answered directly.
 - Model tiers: Opus agents think (architect, debugger, reviewers), Sonnet agents implement, Haiku agents run mechanical tasks.

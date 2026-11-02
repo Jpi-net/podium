@@ -5,7 +5,7 @@ paths:
 # Setup skill (Markdown instructions and templates, Node ESM hook templates)
 
 ## Stack
-- `plugin/skills/setup/SKILL.md` and `plugin/skills/setup/references/*.md`: the instructions of `/maestro` (`audit.md`, `catalog.md`, `genesis.md`, `manifest.md`, `merge.md`, `vision.md`).
+- `plugin/skills/setup/SKILL.md` and `plugin/skills/setup/references/*.md`: the instructions of `/podium` (`audit.md`, `catalog.md`, `genesis.md`, `manifest.md`, `merge.md`, `vision.md`).
 - `plugin/skills/setup/templates/**`: Markdown templates instantiated into other repositories (`CLAUDE.md`, `agents/`, `plugin/skills/`, `rules/`, `settings.json.tmpl`, `gitignore.tmpl`, `review-learnings.md`).
 - `plugin/skills/setup/templates/hooks/*.mjs`: Node 18+ ESM using only `node:` builtins, copied as is into `.claude/hooks/` of the target repository; `FALLBACK.md` for machines without Node.
 
@@ -18,7 +18,7 @@ paths:
 ## Conventions
 - Templates: conditional markers stand on their own lines; a placeholder without value removes its line; lists are renumbered when a block is dropped. Double-brace text that is not UPPER_CASE (Angular, Vue, Jinja examples) is content.
 - Templates work on any stack and OS: Windows and no-Node alternatives, no bash-only steps, no stack-specific assumption outside the language examples in `templates/rules/` (`typescript.md`, `dotnet.md`, `python.md`, `go.md`, `java.md`, `rust.md`, `php.md`, `ruby.md`, `swift.md`, `cpp.md`).
-- Hook templates: 4-space indent, semicolons, single quotes, plain exported functions (no classes), configuration read from `.claude/maestro.json` through `setting('hooks.x', fallback)`.
+- Hook templates: 4-space indent, semicolons, single quotes, plain exported functions (no classes), configuration read from `.claude/podium.json` through `setting('hooks.x', fallback)`.
 - Hooks fail open: stdin or manifest parse errors fall back to `{}`; manifest regexes compile through `pattern()` (try/catch, `null` on error); refuse with `deny(reason)` (JSON `permissionDecision: 'deny'`, exit 0), give feedback with `feedback(message)` (exit 2), never by crashing.
 - No network access and no data sent off the machine, except the user-configured `hooks.workItemCommand`.
 - `post-edit.mjs` rewrites a file only to restore its BOM and line endings.

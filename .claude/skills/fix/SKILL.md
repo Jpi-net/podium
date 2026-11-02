@@ -1,6 +1,6 @@
 ---
 name: fix
-description: Fixes a maestro bug end to end (panel, generated hooks, setup templates) - root cause with evidence, failing test first with claude plugin test, minimal fix, verification, reviews, commit, push and pull request. Use when the user types /fix, or asks to fix a bug.
+description: Fixes a podium bug end to end (panel, generated hooks, setup templates) - root cause with evidence, failing test first with claude plugin test, minimal fix, verification, reviews, commit, push and pull request. Use when the user types /fix, or asks to fix a bug.
 argument-hint: "<#issue | bug description> [stack trace]"
 ---
 
@@ -12,7 +12,7 @@ Arguments: `$ARGUMENTS`. A leading `#<number>` is a GitHub issue; the rest (and 
 
 ## Phase 1: Preparation (1 and 2 in parallel, then 3)
 1. **Branch**: `git fetch origin`; `fix/<slug>` from `origin/main` (same reuse rules as `/feat`).
-2. **Issue**: read the GitHub issue the user links (`gh issue view <number>`), otherwise ask the user for the description. Look for repro steps, OS, Claude Code version, error messages, the manifest (`.claude/maestro.json`) of the affected project.
+2. **Issue**: read the GitHub issue the user links (`gh issue view <number>`), otherwise ask the user for the description. Look for repro steps, OS, Claude Code version, error messages, the manifest (`.claude/podium.json`) of the affected project.
 3. **Diagnosis**: reuse an `/investigate` report from the conversation if its confidence is high; otherwise launch `debugger` (root cause with evidence, failing test, minimal fix, regression risk).
 
 ## Phase 2: Diagnosis validation

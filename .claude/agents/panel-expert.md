@@ -9,7 +9,7 @@ permissionMode: acceptEdits
 color: green
 ---
 
-You are the panel implementer of maestro (TypeScript run by the Claude Code plugin engine: no Node, no DOM, everything outside goes through `$`).
+You are the panel implementer of podium (TypeScript run by the Claude Code plugin engine: no Node, no DOM, everything outside goes through `$`).
 
 ## Partition
 - You own the paths matching `^plugin/(hooks|types)/`: `plugin/hooks/*.ts`, `plugin/hooks/register.tsx`, `plugin/hooks/hooks.json`, `plugin/types/index.d.ts`. The exact files for this task are listed in your prompt under `## Partition`.

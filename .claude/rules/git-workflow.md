@@ -7,7 +7,7 @@
 - Base branch: `main`. Direct commits on `main` are the current practice; use a branch for larger work or when opening a pull request.
 - Feature: `feat/<slug>` from `origin/main`.
 - Fix: `fix/<slug>` from `origin/main`.
-- Always `git fetch origin` first (remote `origin` is GitHub `Jpi-net/maestro`). On an existing shared branch: `git pull --no-rebase` before working.
+- Always `git fetch origin` first (remote `origin` is GitHub `Jpi-net/podium`). On an existing shared branch: `git pull --no-rebase` before working.
 
 ## Commits
 - Format: a short imperative subject with a capital first letter, no type prefix, no trailing period, at most 72 characters (`Seat the orchestrator at a desk in an office`); an optional body says why, wrapped at 72. Release commits: `Release x.y.z`.

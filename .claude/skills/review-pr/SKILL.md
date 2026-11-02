@@ -1,6 +1,6 @@
 ---
 name: review-pr
-description: Reviews a pull request on the maestro repository (correctness, class and no-comment conventions, fail-open hooks, security of generated hooks, tests, README and CHANGELOG) in an isolated worktree and returns a ranked report with ready-to-paste comments. Never posts anything and never touches the current branch. Use when the user types /review-pr or asks to review a pull request.
+description: Reviews a pull request on the podium repository (correctness, class and no-comment conventions, fail-open hooks, security of generated hooks, tests, README and CHANGELOG) in an isolated worktree and returns a ranked report with ready-to-paste comments. Never posts anything and never touches the current branch. Use when the user types /review-pr or asks to review a pull request.
 argument-hint: "<pr number | branch>"
 ---
 
