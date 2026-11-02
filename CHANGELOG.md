@@ -4,6 +4,19 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-02
+
+### Changed
+
+- Renamed from maestro to podium: commands /podium and /podium-stage, skill /podium:setup, project manifest .claude/podium.json (an existing .claude/maestro.json is still read, and /podium update moves it); the GitHub repository is now Jpi-net/podium.
+  Migration: reinstall with `/plugin install podium --marketplace Jpi-net/podium` and uninstall maestro; the panel's settings (fps, notifications, accessory, time per work item) start fresh.
+- When /podium cannot start the setup skill it now fills your prompt instead of sending it.
+- The panel runs only a fixed list of read-only git commands and `uname -m`; plugin/README.md lists them.
+
+### Security
+
+- Generated hooks: a work-item id taken from a prompt can no longer inject shell commands (ids must match ^\w[\w.-]{0,63}$, and the output cache now lives in .git/podium-work-items), and `post-edit` checks .mjs files without a shell; regenerate the hooks with /podium update.
+
 ## [0.1.3] - 2026-11-02
 
 ### Changed
@@ -58,8 +71,9 @@ All notable changes to this project are documented here. The format follows [Kee
 - `/maestro-stage`: live side panel with five views (flow, delivery, history, context, tools), driven by `.claude/maestro.json`.
 - Panel effects tied to verification, seasonal decor, 41 avatar accessories.
 
-[Unreleased]: https://github.com/Jpi-net/maestro/compare/v0.1.3...HEAD
-[0.1.3]: https://github.com/Jpi-net/maestro/compare/v0.1.2...v0.1.3
-[0.1.2]: https://github.com/Jpi-net/maestro/compare/v0.1.1...v0.1.2
-[0.1.1]: https://github.com/Jpi-net/maestro/compare/v0.1.0...v0.1.1
-[0.1.0]: https://github.com/Jpi-net/maestro/releases/tag/v0.1.0
+[Unreleased]: https://github.com/Jpi-net/podium/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/Jpi-net/podium/compare/v0.1.3...v0.2.0
+[0.1.3]: https://github.com/Jpi-net/podium/compare/v0.1.2...v0.1.3
+[0.1.2]: https://github.com/Jpi-net/podium/compare/v0.1.1...v0.1.2
+[0.1.1]: https://github.com/Jpi-net/podium/compare/v0.1.0...v0.1.1
+[0.1.0]: https://github.com/Jpi-net/podium/releases/tag/v0.1.0
