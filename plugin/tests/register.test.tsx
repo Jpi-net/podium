@@ -3,11 +3,11 @@ import type { AgentSpawnInput, On } from 'claude-code'
 import { Fixtures } from './fixtures/sample-project'
 
 const PANE = {
-  plugin: 'maestro',
+  plugin: 'podium',
   component: 'Pane',
-  requestId: 'maestro-stage',
+  requestId: 'podium-stage',
   props: {
-    title: 'Maestro',
+    title: 'Podium',
     isFocused: false,
     bodyColumns: 72,
     placement: 'dock',
@@ -18,7 +18,7 @@ const PANE = {
 
 const VIEWPORT = { columns: 120, rows: 50 }
 
-type Sink = { notifications: string[]; copies: string[]; files?: Record<string, string>; stored?: Record<string, unknown>; fetchAgeMs?: number; isBare?: boolean; opens?: number }
+type Sink = { notifications: string[]; copies: string[]; files?: Record<string, string>; stored?: Record<string, unknown>; fetchAgeMs?: number; isBare?: boolean; opens?: number; submitted?: string[] }
 
 class Engine {
   static spawn(subagentType: string, description: string): AgentSpawnInput {
@@ -32,6 +32,10 @@ class Engine {
       background: false,
       fork: false,
     }
+  }
+
+  static file(sink: Sink, path: string): string | undefined {
+    return Object.entries(sink.files ?? {}).find(([key]) => path.endsWith(`/${key}`))?.[1]
   }
 
   static stub(
@@ -50,7 +54,7 @@ class Engine {
       sink.copies.push(e.text)
       return { value: { isCopied: true } }
     })
-    on('command.register', () => ({ value: { command: 'maestro-stage' } }))
+    on('command.register', () => ({ value: { command: 'podium-stage' } }))
     on('ui.open', () => {
       sink.opens = (sink.opens ?? 0) + 1
       return { value: { isPlaced: true } }
@@ -58,7 +62,7 @@ class Engine {
     on('session.start', (_, e) => ({ cwd: e.cwd }))
     on('agent.list', () => ({ value: [] }))
     on('fs.list', () => ({ value: [] }))
-    on('fs.read', (_, e) => ({ value: sink.files?.[e.path] ?? (String(e.path).endsWith('.claude/maestro.json') && sink.isBare !== true ? JSON.stringify(Fixtures.SAMPLE_PROJECT) : '') }))
+    on('fs.read', (_, e) => ({ value: sink.files?.[e.path] ?? Engine.file(sink, String(e.path)) ?? (String(e.path).endsWith('.claude/podium.json') && sink.isBare !== true ? JSON.stringify(Fixtures.SAMPLE_PROJECT) : '') }))
     on('store.get', () => ({ value: undefined }))
     on('env.get', () => ({ value: undefined }))
     on('store.set', (_, e) => {
@@ -66,7 +70,10 @@ class Engine {
       return { value: undefined }
     })
     on('fs.stat', () => ({ value: { kind: 'file', size: 0, mtimeMs: Date.now() - (sink.fetchAgeMs ?? 3 * 86_400_000 + 60_000), isLink: false } }))
-    on('prompt.submit', (_, e) => ({ text: e.text }))
+    on('prompt.submit', (_, e) => {
+      sink.submitted?.push(e.text)
+      return { text: e.text }
+    })
     on('process.run', (_, e) => {
       const argv = e.argv.join(' ')
       const stdout = git(argv) ?? (argv.includes('rev-parse --git-common-dir')
@@ -105,7 +112,7 @@ test('the panel draws the four tabs with a running agent', async ($, on) => {
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal', viewport: VIEWPORT })
 
   // Assert
-  expect((await ui.find({ type: 'Text', text: /MAESTRO/ }))?.text).toContain('MAESTRO')
+  expect((await ui.find({ type: 'Text', text: /PODIUM/ }))?.text).toContain('PODIUM')
   expect((await ui.find({ key: 'run-a1' }))?.type).toBe('Button')
   expect((await ui.find({ type: 'Raster' }))?.key).toBe('graph')
   expect((await ui.find({ type: 'Text', text: /dotnet-expert/ }))?.text).toContain('dotnet-expert')
@@ -214,7 +221,7 @@ test('the journal filters errors and the reset command clears everything', async
 
   // Assert
   expect((await ui.find({ type: 'Text', text: /Read failed/ }))?.text).toContain('Read failed')
-  await $.command.run({ command: 'maestro-stage', args: 'reset' } as never)
+  await $.command.run({ command: 'podium-stage', args: 'reset' } as never)
   expect(await ui.find({ type: 'Text', text: /Read failed/ })).toBeUndefined()
   await ui.unmount()
 })
@@ -294,8 +301,8 @@ test('only the setup command is tagged with the setup role, never the panel comm
   Engine.stub(on, true, 'main', () => undefined, { notifications: [], copies: [], isBare: true })
   on('command.list', () => ({
     value: [
-      { name: 'maestro-stage', description: 'Panel', source: 'plugin', plugin: 'maestro' },
-      { name: 'maestro', description: 'Setup', source: 'plugin', plugin: 'maestro' },
+      { name: 'podium-stage', description: 'Panel', source: 'plugin', plugin: 'podium' },
+      { name: 'podium', description: 'Setup', source: 'plugin', plugin: 'podium' },
     ],
   }))
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
@@ -305,9 +312,9 @@ test('only the setup command is tagged with the setup role, never the panel comm
   await ui.press({ key: 'tab-commandes' })
 
   // Assert
-  const tagged = (await ui.findAll({ type: 'Text' })).filter(t => /^ \[Maestro\]$/.test(t.text ?? ''))
+  const tagged = (await ui.findAll({ type: 'Text' })).filter(t => /^ \[Podium\]$/.test(t.text ?? ''))
   expect(tagged.length).toBe(1)
-  expect((await ui.find({ key: 'cmd-plugins-maestro-stage' }))?.type).toBe('Button')
+  expect((await ui.find({ key: 'cmd-plugins-podium-stage' }))?.type).toBe('Button')
   await ui.unmount()
 })
 
@@ -337,8 +344,8 @@ test('the hidden disco command toggles disco mode', async ($, on) => {
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
 
   // Act
-  const on1 = await $.command.run({ command: 'maestro-stage', args: 'disco' } as never)
-  const off = await $.command.run({ command: 'maestro-stage', args: 'disco' } as never)
+  const on1 = await $.command.run({ command: 'podium-stage', args: 'disco' } as never)
+  const off = await $.command.run({ command: 'podium-stage', args: 'disco' } as never)
 
   // Assert
   expect(JSON.stringify(on1)).toContain('disco mode on')
@@ -352,10 +359,10 @@ test('the accessory command draws another one, forces one and rejects an unknown
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
 
   // Act
-  const drawn = await $.command.run({ command: 'maestro-stage', args: 'accessory' } as never)
-  const named = await $.command.run({ command: 'maestro-stage', args: 'accessory monocle' } as never)
-  const unknown = await $.command.run({ command: 'maestro-stage', args: 'accessory top-hat' } as never)
-  const listed = await $.command.run({ command: 'maestro-stage', args: 'accessory list' } as never)
+  const drawn = await $.command.run({ command: 'podium-stage', args: 'accessory' } as never)
+  const named = await $.command.run({ command: 'podium-stage', args: 'accessory monocle' } as never)
+  const unknown = await $.command.run({ command: 'podium-stage', args: 'accessory top-hat' } as never)
+  const listed = await $.command.run({ command: 'podium-stage', args: 'accessory list' } as never)
 
   // Assert
   expect(JSON.stringify(drawn)).toContain('for this session')
@@ -635,7 +642,7 @@ test('the recap command copies a summary of the work item and the agents', async
   await $.agent.spawn(Engine.spawn('code-reviewer', 'Review'))
 
   // Act
-  const answer = await $.command.run({ command: 'maestro-stage', args: 'recap' } as never)
+  const answer = await $.command.run({ command: 'podium-stage', args: 'recap' } as never)
 
   // Assert
   const text = JSON.stringify(answer)
@@ -643,7 +650,7 @@ test('the recap command copies a summary of the work item and the agents', async
   expect(text).toContain('dotnet-expert')
   expect(text).toContain('code-reviewer')
   expect(sink.copies.length).toBe(1)
-  expect(sink.copies[0] ?? '').toContain('Maestro — WI #1234')
+  expect(sink.copies[0] ?? '').toContain('Podium — WI #1234')
 })
 
 test('notify off silences native notifications of a failed verification', async ($, on) => {
@@ -654,7 +661,7 @@ test('notify off silences native notifications of a failed verification', async 
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
 
   // Act
-  await $.command.run({ command: 'maestro-stage', args: 'notify off' } as never)
+  await $.command.run({ command: 'podium-stage', args: 'notify off' } as never)
   await $.tool.call({ tool: 'Bash', command: 'dotnet build Contoso.Policies.slnx -c Debug', agentId: 'l1' })
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal', viewport: VIEWPORT })
   await ui.press({ key: 'tab-contexte' })
@@ -671,7 +678,7 @@ test('notify on sends a single notification for two failures within 60 s', async
   const toasts = Engine.stub(on, false, 'features/1234-claims', () => undefined, sink)
   on('tool.call', () => ({ result: { stdout: 'Build FAILED.', stderr: '', interrupted: false }, isError: true }))
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
-  await $.command.run({ command: 'maestro-stage', args: 'notify on' } as never)
+  await $.command.run({ command: 'podium-stage', args: 'notify on' } as never)
 
   // Act
   await $.tool.call({ tool: 'Bash', command: 'dotnet build Contoso.Policies.slnx -c Debug', agentId: 'l1' })
@@ -843,7 +850,7 @@ test('the fps 20 command is stored and shown in the header', async ($, on) => {
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
 
   // Act
-  const answer = await $.command.run({ command: 'maestro-stage', args: 'fps 20' } as never)
+  const answer = await $.command.run({ command: 'podium-stage', args: 'fps 20' } as never)
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal', viewport: VIEWPORT })
 
   // Assert
@@ -860,7 +867,7 @@ test('the fps command rejects an out-of-range value', async ($, on) => {
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
 
   // Act
-  const answer = await $.command.run({ command: 'maestro-stage', args: 'fps 90' } as never)
+  const answer = await $.command.run({ command: 'podium-stage', args: 'fps 90' } as never)
 
   // Assert
   expect(JSON.stringify(answer)).toContain('between 10 and 60')
@@ -878,9 +885,9 @@ test('the header fits on one line at 64 columns with the work item, the phase an
   const ui = await $.ui.mount({ ...PANE, props: { ...PANE.props, bodyColumns: 64 }, surface: 'terminal', viewport: VIEWPORT })
 
   // Assert
-  const left = (await ui.find({ type: 'Text', text: /^◆ MAESTRO/ }))?.text ?? ''
+  const left = (await ui.find({ type: 'Text', text: /^◆ PODIUM/ }))?.text ?? ''
   const right = (await ui.find({ type: 'Text', text: /^● / }))?.text ?? ''
-  expect(left).toMatch(/^◆ MAESTRO  (#1234 · )?Experts 0\/1$/)
+  expect(left).toMatch(/^◆ PODIUM  (#1234 · )?Experts 0\/1$/)
   expect(right).toBe('● 1')
   expect(Array.from(left).length + 1 + Array.from(right).length).toBeLessThanOrEqual(64)
   expect(await ui.find({ type: 'Text', text: /started|tok/ })).toBeUndefined()
@@ -966,7 +973,7 @@ test('adaptive fps: a running agent gives 60 effective fps in work mode', async 
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal', viewport: VIEWPORT })
 
   // Assert
-  expect(JSON.stringify(await $.command.run({ command: 'maestro-stage', args: 'fps' } as never))).toContain('60 fps')
+  expect(JSON.stringify(await $.command.run({ command: 'podium-stage', args: 'fps' } as never))).toContain('60 fps')
   await ui.unmount()
 })
 
@@ -980,7 +987,7 @@ test('adaptive fps: without running activity the ambient mode gives 20 fps', asy
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal', viewport: VIEWPORT })
 
   // Assert
-  expect(JSON.stringify(await $.command.run({ command: 'maestro-stage', args: 'fps' } as never))).toContain('20 fps')
+  expect(JSON.stringify(await $.command.run({ command: 'podium-stage', args: 'fps' } as never))).toContain('20 fps')
   await ui.unmount()
 })
 
@@ -994,12 +1001,12 @@ test('adaptive fps: the fps 30 command caps the work mode at 30', async ($, on) 
   await $.agent.spawn(Engine.spawn('dotnet-expert', 'Claims domain'))
 
   // Act
-  await $.command.run({ command: 'maestro-stage', args: 'fps 30' } as never)
+  await $.command.run({ command: 'podium-stage', args: 'fps 30' } as never)
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal', viewport: VIEWPORT })
 
   // Assert
   expect(sink.stored?.['fps']).toBe(30)
-  expect(JSON.stringify(await $.command.run({ command: 'maestro-stage', args: 'fps' } as never))).toContain('30 fps')
+  expect(JSON.stringify(await $.command.run({ command: 'podium-stage', args: 'fps' } as never))).toContain('30 fps')
   await ui.unmount()
 })
 
@@ -1009,12 +1016,12 @@ test('the hd command keeps QUAD rendering and announces the removal of HD mode',
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
 
   // Act
-  const answer = await $.command.run({ command: 'maestro-stage', args: 'hd' } as never)
+  const answer = await $.command.run({ command: 'podium-stage', args: 'hd' } as never)
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal', viewport: VIEWPORT })
 
   // Assert
   expect(JSON.stringify(answer)).toContain('HD mode was removed: pixel rendering is smoother.')
-  expect(JSON.stringify(await $.command.run({ command: 'maestro-stage', args: 'fps' } as never))).toContain('QUAD')
+  expect(JSON.stringify(await $.command.run({ command: 'podium-stage', args: 'fps' } as never))).toContain('QUAD')
   await ui.unmount()
 })
 
@@ -1293,15 +1300,15 @@ test('the alternative tab names open Delivery and History', async ($, on) => {
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
 
   // Act
-  const regles = await $.command.run({ command: 'maestro-stage', args: 'rules' } as never)
+  const regles = await $.command.run({ command: 'podium-stage', args: 'rules' } as never)
   const onRegles = await $.ui.mount({ ...PANE, surface: 'terminal', viewport: VIEWPORT })
   const verdict = (await onRegles.find({ type: 'Text', text: /VERDICT/ }))?.text
   await onRegles.unmount()
-  await $.command.run({ command: 'maestro-stage', args: 'timeline' } as never)
+  await $.command.run({ command: 'podium-stage', args: 'timeline' } as never)
   const onLanes = await $.ui.mount({ ...PANE, surface: 'terminal', viewport: VIEWPORT })
   const lanes = (await onLanes.find({ type: 'Raster' }))?.key
   await onLanes.unmount()
-  await $.command.run({ command: 'maestro-stage', args: 'journal' } as never)
+  await $.command.run({ command: 'podium-stage', args: 'journal' } as never)
   const onJournal = await $.ui.mount({ ...PANE, surface: 'terminal', viewport: VIEWPORT })
 
   // Assert
@@ -1320,7 +1327,7 @@ test('the Tools tab lists the project commands with their role and prepares the 
     value: [
       { name: 'feat', description: 'New feature', source: 'user' },
       { name: 'notes-perso', description: 'My notes', source: 'user' },
-      { name: 'maestro-stage', description: 'Panel', source: 'plugin', plugin: 'maestro' },
+      { name: 'podium-stage', description: 'Panel', source: 'plugin', plugin: 'podium' },
       { name: 'help', description: 'Help', source: 'builtin' },
     ],
   }))
@@ -1347,7 +1354,7 @@ test('the Tools tab lists the project commands with their role and prepares the 
   await ui.unmount()
 })
 
-test('a project without .claude suggests /maestro as the next step', async ($, on) => {
+test('a project without .claude suggests /podium as the next step', async ($, on) => {
   // Arrange
   Engine.stub(on, true, 'main', () => undefined, { notifications: [], copies: [], isBare: true })
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
@@ -1357,29 +1364,186 @@ test('a project without .claude suggests /maestro as the next step', async ($, o
   await ui.press({ key: 'tab-commandes' })
 
   // Assert
-  expect((await ui.find({ type: 'Text', text: /Project without \.claude\/: run \/maestro/ }))?.text).toBeTruthy()
+  expect((await ui.find({ type: 'Text', text: /Project without \.claude\/: run \/podium/ }))?.text).toBeTruthy()
   expect((await ui.find({ type: 'Text', text: /no \.claude\/ setup/ }))?.text).toBeTruthy()
   await ui.unmount()
 })
 
-test('/maestro launches the plugin skill with its arguments', async ($, on) => {
+test('/podium launches the plugin skill with its arguments', async ($, on) => {
   // Arrange
   Engine.stub(on)
   const clock = mock.clock(on, { now: 1_000_000 })
   const launched: string[] = []
-  on('command.run', { command: 'maestro:setup' }, (_, e) => {
+  on('command.run', { command: 'podium:setup' }, (_, e) => {
     launched.push(e.args)
     return { text: '' }
   })
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
 
   // Act
-  const answer = await $.command.run({ command: 'maestro', args: 'audit' } as never)
+  const answer = await $.command.run({ command: 'podium', args: 'audit' } as never)
   await clock.advance(100)
 
   // Assert
   expect(launched).toEqual(['audit'])
-  expect(JSON.stringify(answer)).toContain('/maestro:setup audit')
+  expect(JSON.stringify(answer)).toContain('/podium:setup audit')
+})
+
+class GitFixture {
+  static readonly SUBS = ['rev-parse', 'status', 'rev-list', 'symbolic-ref', 'for-each-ref', 'branch', 'grep']
+
+  static manifest(git: Record<string, string>): string {
+    return JSON.stringify({ ...Fixtures.SAMPLE_PROJECT, git: { ...Fixtures.SAMPLE_PROJECT.git, ...git } })
+  }
+
+  static files(git: Record<string, string>): Record<string, string> {
+    return { '.claude/podium.json': GitFixture.manifest(git) }
+  }
+
+  static recorder(calls: string[]): (argv: string) => string | undefined {
+    return argv => {
+      calls.push(argv)
+      return undefined
+    }
+  }
+}
+
+test('every process the panel runs is a read-only git command or uname', async ($, on) => {
+  // Arrange
+  const calls: string[] = []
+  Engine.stub(on, true, 'features/1234-claims', GitFixture.recorder(calls))
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal', viewport: VIEWPORT })
+
+  // Act
+  await ui.press({ key: 'tab-commandes' })
+
+  // Assert
+  const subs = calls.filter(c => c !== 'uname -m').map(c => c.split(' ')[2] ?? '')
+  expect(calls.length).toBeGreaterThan(0)
+  expect(calls.filter(c => c !== 'uname -m').every(c => c.startsWith('git --no-optional-locks '))).toBe(true)
+  expect(subs.every(sub => GitFixture.SUBS.includes(sub))).toBe(true)
+  await ui.unmount()
+})
+
+test('the panel reads the legacy maestro manifest when podium.json is missing', async ($, on) => {
+  // Arrange
+  const calls: string[] = []
+  const sink: Sink = { notifications: [], copies: [], isBare: true, files: { '.claude/maestro.json': GitFixture.manifest({ base: 'legacy-base' }) } }
+  Engine.stub(on, true, 'features/1234-claims', GitFixture.recorder(calls), sink)
+
+  // Act
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+
+  // Assert
+  expect(calls.some(c => c.includes('origin/legacy-base...HEAD'))).toBe(true)
+})
+
+test('podium.json wins over the legacy maestro manifest when both exist', async ($, on) => {
+  // Arrange
+  const calls: string[] = []
+  const files = { '.claude/maestro.json': GitFixture.manifest({ base: 'legacy-base' }), '.claude/podium.json': GitFixture.manifest({ base: 'podium-base' }) }
+  Engine.stub(on, true, 'features/1234-claims', GitFixture.recorder(calls), { notifications: [], copies: [], files })
+
+  // Act
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+
+  // Assert
+  expect(calls.some(c => c.includes('origin/podium-base...HEAD'))).toBe(true)
+  expect(calls.some(c => c.includes('legacy-base'))).toBe(false)
+})
+
+test('a base branch starting with a dash is never passed to git', async ($, on) => {
+  // Arrange
+  const calls: string[] = []
+  const sink: Sink = { notifications: [], copies: [], files: GitFixture.files({ base: '--upload-pack=evil' }) }
+  Engine.stub(on, true, 'features/1234-claims', GitFixture.recorder(calls), sink)
+
+  // Act
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+
+  // Assert
+  expect(calls.some(c => c.includes('status'))).toBe(true)
+  expect(calls.some(c => c.includes('upload-pack'))).toBe(false)
+})
+
+test('a base branch containing a space is never passed to git', async ($, on) => {
+  // Arrange
+  const calls: string[] = []
+  const sink: Sink = { notifications: [], copies: [], files: GitFixture.files({ base: 'main; rm' }) }
+  Engine.stub(on, true, 'features/1234-claims', GitFixture.recorder(calls), sink)
+
+  // Act
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+
+  // Assert
+  expect(calls.some(c => c.includes('status'))).toBe(true)
+  expect(calls.some(c => c.includes('rm'))).toBe(false)
+})
+
+test('a work item starting with a dash is never passed to git', async ($, on) => {
+  // Arrange
+  const calls: string[] = []
+  const sink: Sink = { notifications: [], copies: [], files: GitFixture.files({ workItem: '^(.+)$' }) }
+  Engine.stub(on, true, '--exec-path', GitFixture.recorder(calls), sink)
+
+  // Act
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+
+  // Assert
+  expect(calls.some(c => c.includes('exec-path'))).toBe(false)
+})
+
+test('a work item containing a space is never passed to git', async ($, on) => {
+  // Arrange
+  const calls: string[] = []
+  const sink: Sink = { notifications: [], copies: [], files: GitFixture.files({ workItem: '^(.+)$' }) }
+  Engine.stub(on, true, 'wip stuff', GitFixture.recorder(calls), sink)
+
+  // Act
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+
+  // Assert
+  expect(calls.some(c => c.includes('stuff'))).toBe(false)
+})
+
+test('a safe work item is searched among the branches', async ($, on) => {
+  // Arrange
+  const calls: string[] = []
+  const sink: Sink = { notifications: [], copies: [], files: GitFixture.files({ workItem: '^(.+)$' }) }
+  Engine.stub(on, true, 'wip', GitFixture.recorder(calls), sink)
+
+  // Act
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal', viewport: VIEWPORT })
+  await ui.unmount()
+
+  // Assert
+  expect(calls.some(c => c.startsWith('git --no-optional-locks branch') && c.includes('*wip*'))).toBe(true)
+})
+
+test('/podium fills the prompt without submitting it when the skill launch fails', async ($, on) => {
+  // Arrange
+  const sink: Sink = { notifications: [], copies: [], submitted: [] }
+  Engine.stub(on, true, 'features/1234-claims', () => undefined, sink)
+  const clock = mock.clock(on, { now: 1_000_000 })
+  const filled: string[] = []
+  on('command.run', { command: 'podium:setup' }, () => {
+    throw new Error('no such command')
+  })
+  on('prompt.fill', (_, e) => {
+    filled.push(e.text)
+    return { isFilled: true }
+  })
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+
+  // Act
+  await $.command.run({ command: 'podium', args: 'audit' } as never)
+  await clock.advance(100)
+
+  // Assert
+  expect(filled).toEqual(['/podium:setup audit'])
+  expect(sink.submitted).toEqual([])
 })
 
 test('an idle Flow lists all the project commands, clickable', async ($, on) => {
@@ -1411,7 +1575,7 @@ test('an idle Flow lists all the project commands, clickable', async ($, on) => 
   await ui.unmount()
 })
 
-test('the panel does not open by itself in a project without a maestro manifest', async ($, on) => {
+test('the panel does not open by itself in a project without a podium manifest', async ($, on) => {
   // Arrange
   const sink: Sink = { notifications: [], copies: [], isBare: true }
   Engine.stub(on, true, 'main', () => undefined, sink)
@@ -1420,15 +1584,15 @@ test('the panel does not open by itself in a project without a maestro manifest'
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
   await $.prompt.submit({ wait: false, origin: { kind: 'composer' }, text: 'hello' })
   const before = sink.opens ?? 0
-  const answer = await $.command.run({ command: 'maestro-stage', args: '' } as never)
+  const answer = await $.command.run({ command: 'podium-stage', args: '' } as never)
 
   // Assert
   expect(before).toBe(0)
   expect(sink.opens).toBe(1)
-  expect(answer.text).toContain('Maestro opened')
+  expect(answer.text).toContain('Podium opened')
 })
 
-test('the panel opens by itself in a project set up with a maestro manifest', async ($, on) => {
+test('the panel opens by itself in a project set up with a podium manifest', async ($, on) => {
   // Arrange
   const sink: Sink = { notifications: [], copies: [] }
   Engine.stub(on, true, 'main', () => undefined, sink)
@@ -1531,7 +1695,7 @@ test('the reset command empties the verification, the alerts and the events', as
   const before = await ui.find({ type: 'Text', text: /^✗ Build failed/ })
 
   // Act
-  await $.command.run({ command: 'maestro-stage', args: 'reset' } as never)
+  await $.command.run({ command: 'podium-stage', args: 'reset' } as never)
 
   // Assert
   expect(before).toBeDefined()

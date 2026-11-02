@@ -4,7 +4,7 @@ test('the panel opens when the terminal attaches after a startup failure', async
   // Arrange
   let opens = 0
   let placed = false
-  on('command.register', () => ({ value: { command: 'maestro-stage' } }))
+  on('command.register', () => ({ value: { command: 'podium-stage' } }))
   on('ui.open', () => {
     opens++
     return { value: placed ? { isPlaced: true } : { isPlaced: false, reason: 'no-surface' } }
@@ -13,7 +13,7 @@ test('the panel opens when the terminal attaches after a startup failure', async
   on('session.attach', (_, e) => ({ clientId: e.clientId }))
   on('agent.list', () => ({ value: [] }))
   on('fs.list', () => ({ value: [] }))
-  on('fs.read', (_, e) => ({ value: String(e.path).endsWith('maestro.json') ? '{"version":1}' : '' }))
+  on('fs.read', (_, e) => ({ value: String(e.path).endsWith('podium.json') ? '{"version":1}' : '' }))
   on('fs.stat', () => ({ value: { kind: 'file', size: 0, mtimeMs: 0, isLink: false } }))
   on('store.get', () => ({ value: undefined }))
   on('store.set', () => ({ value: undefined }))
@@ -37,7 +37,7 @@ test('the panel opens on the first prompt when the automatic opening was not pla
   // Arrange
   let opens = 0
   let placed = false
-  on('command.register', () => ({ value: { command: 'maestro-stage' } }))
+  on('command.register', () => ({ value: { command: 'podium-stage' } }))
   on('ui.open', () => {
     opens++
     return { value: placed ? { isPlaced: true } : { isPlaced: false, reason: 'narrow' } }
@@ -46,7 +46,7 @@ test('the panel opens on the first prompt when the automatic opening was not pla
   on('prompt.submit', (_, e) => ({ text: e.text }))
   on('agent.list', () => ({ value: [] }))
   on('fs.list', () => ({ value: [] }))
-  on('fs.read', (_, e) => ({ value: String(e.path).endsWith('maestro.json') ? '{"version":1}' : '' }))
+  on('fs.read', (_, e) => ({ value: String(e.path).endsWith('podium.json') ? '{"version":1}' : '' }))
   on('fs.stat', () => ({ value: { kind: 'file', size: 0, mtimeMs: 0, isLink: false } }))
   on('store.get', () => ({ value: undefined }))
   on('store.set', () => ({ value: undefined }))

@@ -139,7 +139,7 @@ export type FlowView = {
 
 declare module 'claude-code' {
   interface PluginState {
-    'maestro': {
+    'podium': {
       agents: Shaped<FlowAgent[]>
       events: Shaped<FlowEvent[]>
       alerts: Shaped<FlowAlert[]>

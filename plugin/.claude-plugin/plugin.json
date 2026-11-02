@@ -1,14 +1,14 @@
 {
-  "name": "maestro",
-  "displayName": "Maestro",
-  "version": "0.1.3",
-  "description": "Conduct Claude Code like an orchestra: /maestro builds and maintains your project's .claude/ (CLAUDE.md, path-scoped rules, model-tiered agents, role skills, guard hooks), and /maestro-stage opens a live side panel of the flow, the verification, the reviews and the commands.",
+  "name": "podium",
+  "displayName": "Podium",
+  "version": "0.2.0",
+  "description": "Conduct Claude Code like an orchestra: /podium builds and maintains your project's .claude/ (CLAUDE.md, path-scoped rules, model-tiered agents, role skills, guard hooks), and /podium-stage opens a live side panel of the flow, the verification, the reviews and the commands.",
   "author": {
     "name": "Julien Pierlot",
     "url": "https://github.com/Jpi-net"
   },
-  "homepage": "https://github.com/Jpi-net/maestro",
-  "repository": "https://github.com/Jpi-net/maestro",
+  "homepage": "https://github.com/Jpi-net/podium",
+  "repository": "https://github.com/Jpi-net/podium",
   "license": "MIT",
   "keywords": [
     "orchestration",

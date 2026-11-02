@@ -5,7 +5,6 @@ import type {
   Elements,
   FsEntry,
   FsStat,
-  ProcessRunInit,
   ProcessRunResult,
   Register,
   RenderElement,
@@ -55,6 +54,18 @@ type PhaseStat = { name: string; total: number; finished: number; state: PhaseSt
 type HeaderPart = { text: string; color: Rgb }
 type GraphCache = { key: string; result: GraphResult }
 type Change<T> = (change: (value: T) => T) => Promise<T>
+type GitPort = {
+  head: () => Promise<string>
+  branch: () => Promise<string>
+  status: () => Promise<string>
+  gitDir: () => Promise<string>
+  originHead: () => Promise<string>
+  remoteBranches: () => Promise<string>
+  ahead: (base: string) => Promise<string>
+  divergence: (base: string) => Promise<string>
+  branchesLike: (wi: string) => Promise<string>
+  grep: (pattern: string, path: string) => Promise<string>
+}
 type Io = {
   agents: Change<FlowAgent[]>
   events: Change<FlowEvent[]>
@@ -73,7 +84,8 @@ type Io = {
   status: (text: string | undefined) => void
   storeGet: (key: string) => Promise<unknown>
   storeSet: (key: string, value: unknown) => Promise<void>
-  run: (argv: readonly string[], init?: ProcessRunInit) => Promise<ProcessRunResult>
+  git: GitPort
+  arch: () => Promise<string>
   now: () => Promise<number>
   list: (path: string) => Promise<FsEntry[]>
   read: (path: string) => Promise<string>
@@ -89,16 +101,16 @@ type Io = {
   term: () => Promise<string | undefined>
 }
 
-const PANE = 'maestro-stage'
+const PANE = 'podium-stage'
 
-const agentsAtom = atom({ plugin: 'maestro', key: 'agents' } as const, [], { shape: 'agents-1' })
-const eventsAtom = atom({ plugin: 'maestro', key: 'events' } as const, [], { shape: 'events-1' })
-const alertsAtom = atom({ plugin: 'maestro', key: 'alerts' } as const, [], { shape: 'alerts-1' })
-const usageAtom = atom({ plugin: 'maestro', key: 'usage' } as const, [], { shape: 'usage-1' })
-const reviewsAtom = atom({ plugin: 'maestro', key: 'reviews' } as const, [], { shape: 'reviews-2' })
-const accessoryAtom = atom({ plugin: 'maestro', key: 'accessory' } as const, '', { shape: 'accessory-1' })
+const agentsAtom = atom({ plugin: 'podium', key: 'agents' } as const, [], { shape: 'agents-1' })
+const eventsAtom = atom({ plugin: 'podium', key: 'events' } as const, [], { shape: 'events-1' })
+const alertsAtom = atom({ plugin: 'podium', key: 'alerts' } as const, [], { shape: 'alerts-1' })
+const usageAtom = atom({ plugin: 'podium', key: 'usage' } as const, [], { shape: 'usage-1' })
+const reviewsAtom = atom({ plugin: 'podium', key: 'reviews' } as const, [], { shape: 'reviews-2' })
+const accessoryAtom = atom({ plugin: 'podium', key: 'accessory' } as const, '', { shape: 'accessory-1' })
 const verifAtom = atom(
-  { plugin: 'maestro', key: 'verif' } as const,
+  { plugin: 'podium', key: 'verif' } as const,
   {
     build: { status: 'idle', at: 0, durationMs: 0, detail: '', agentId: '' },
     format: { status: 'idle', at: 0, durationMs: 0, detail: '', agentId: '' },
@@ -111,12 +123,12 @@ const verifAtom = atom(
   { shape: 'verif-3' },
 )
 const mainAtom = atom(
-  { plugin: 'maestro', key: 'main' } as const,
+  { plugin: 'podium', key: 'main' } as const,
   { tool: '', toolCount: 0, isBusy: false, busySince: 0, model: '' },
   { shape: 'main-1' },
 )
 const contextAtom = atom(
-  { plugin: 'maestro', key: 'context' } as const,
+  { plugin: 'podium', key: 'context' } as const,
   {
     branch: '',
     wi: '',
@@ -143,7 +155,7 @@ const contextAtom = atom(
   { shape: 'context-4' },
 )
 const viewAtom = atom(
-  { plugin: 'maestro', key: 'view' } as const,
+  { plugin: 'podium', key: 'view' } as const,
   { tab: 'flux', mode: 'journal', filter: 'essential', isWhyShown: false, isReplaying: false, replaySpeed: 8, isClosed: false },
   { shape: 'view-5' },
 )
@@ -218,8 +230,8 @@ class Runtime {
   static combo = 0
   static comboAt = 0
 
-  static get io(): Io {
-    if (!Runtime.ports) throw new Error('maestro: engine ports are not ready')
+  static io(): Io {
+    if (!Runtime.ports) throw new Error('podium: engine ports are not ready')
     return Runtime.ports
   }
 }
@@ -244,7 +256,7 @@ class Flow {
   static readonly MAX_ALERTS = 200
   static readonly LIVE_WINDOW_MS = 30 * 60_000
   static readonly SPEEDS = [4, 8, 16, 32, 64]
-  static get VERIF_LABELS(): Record<VerifKey, string> {
+  static verifLabels(): Record<VerifKey, string> {
     const labels = {} as Record<VerifKey, string>
     for (const k of Rules.STEP_ORDER) labels[k] = Rules.verifLabel(k)
     return labels
@@ -281,7 +293,7 @@ class Flow {
     tools: { tab: 'commandes' },
   }
   static readonly FILTERS = ['essential', 'errors', 'all']
-  static readonly SKILL = 'maestro:setup'
+  static readonly SKILL = 'podium:setup'
   static readonly RUN_FALLBACK_MS = 30 * 60_000
 
   static field(e: unknown, name: string): string {
@@ -333,19 +345,19 @@ class Flow {
   }
 
   static async setAgents(change: (list: FlowAgent[]) => FlowAgent[]): Promise<void> {
-    Runtime.agents = await Runtime.io.agents(change)
+    Runtime.agents = await Runtime.io().agents(change)
   }
 
   static async setMain(change: (main: FlowMain) => FlowMain): Promise<void> {
-    Runtime.main = await Runtime.io.main(change)
+    Runtime.main = await Runtime.io().main(change)
   }
 
   static async setView(change: (view: FlowView) => FlowView): Promise<void> {
-    Runtime.view = await Runtime.io.view(change)
+    Runtime.view = await Runtime.io().view(change)
   }
 
   static async setContext(change: (context: FlowContext) => FlowContext): Promise<void> {
-    Runtime.context = await Runtime.io.context(change)
+    Runtime.context = await Runtime.io().context(change)
   }
 
   static enqueue(task: () => Promise<void>): Promise<void> {
@@ -364,7 +376,7 @@ class Flow {
     Runtime.buffer = []
     if (batch.length === 0) return
     try {
-      Runtime.events = await Runtime.io.events(list => [...list, ...batch].slice(-Flow.MAX_EVENTS))
+      Runtime.events = await Runtime.io().events(list => [...list, ...batch].slice(-Flow.MAX_EVENTS))
     } catch {
       return
     }
@@ -392,7 +404,7 @@ class Flow {
   }
 
   static async treeState(): Promise<string> {
-    const [head, status] = await Promise.all([Flow.git(['rev-parse', 'HEAD']), Flow.git(['status', '--porcelain'])])
+    const [head, status] = await Promise.all([Runtime.io().git.head(), Runtime.io().git.status()])
     return `${head}\n${status}`
   }
 
@@ -400,7 +412,7 @@ class Flow {
     if (hits.length === 0) return
     const at = Date.now()
     const fresh: FlowAlert[] = []
-    await Runtime.io.alerts(list => {
+    await Runtime.io().alerts(list => {
       fresh.length = 0
       const added = hits
         .filter(hit => !list.some(a => a.rule === hit.rule && a.file === file && a.agentId === agentId && a.detail === hit.detail))
@@ -411,30 +423,30 @@ class Flow {
     for (const alert of fresh) {
       await Flow.pushEvent(agentId, 'alert', `${Rules.label(alert.rule)} · ${Theme.basename(file)}`, alert.level === 'error')
       if (alert.level === 'error') {
-        void Runtime.io.toast(`maestro ✗ ${Rules.label(alert.rule)} · ${Theme.basename(file) || alert.detail}`, { timeoutMs: 6000 })
+        void Runtime.io().toast(`podium ✗ ${Rules.label(alert.rule)} · ${Theme.basename(file) || alert.detail}`, { timeoutMs: 6000 })
       }
     }
     await Flow.publishStatus()
   }
 
   static async publishStatus(): Promise<void> {
-    const alerts = await Runtime.io.readAlerts()
+    const alerts = await Runtime.io().readAlerts()
     const running = Runtime.agents.filter(a => a.status === 'running').length
     const errors = alerts.filter(a => a.level === 'error').length
     const warns = alerts.length - errors
     if (running === 0 && alerts.length === 0) {
-      Runtime.io.status(undefined)
+      Runtime.io().status(undefined)
       return
     }
     const parts = [running > 0 ? `◆ ${running} active agent${running > 1 ? 's' : ''}` : '◇ idle']
     if (errors > 0) parts.push(`✗ ${errors} error${errors > 1 ? 's' : ''}`)
     if (warns > 0) parts.push(`! ${warns} alert${warns > 1 ? 's' : ''}`)
-    Runtime.io.status(`Maestro · ${parts.join(' · ')}`)
+    Runtime.io().status(`Podium · ${parts.join(' · ')}`)
   }
 
   static celebrate(kind: CelebrationKind, text: string): void {
     Runtime.celebrations = [...Runtime.celebrations, { kind, at: Date.now() }].slice(-10)
-    Runtime.io.toast(text, { timeoutMs: 5000 })
+    Runtime.io().toast(text, { timeoutMs: 5000 })
   }
 
   static notify(text: string): void {
@@ -442,15 +454,15 @@ class Flow {
     const now = Date.now()
     if (Runtime.lastNotifyAt > 0 && now - Runtime.lastNotifyAt < Flow.NOTIFY_GAP_MS) return
     Runtime.lastNotifyAt = now
-    void Runtime.io.notify(text, 'Maestro').catch(() => undefined)
+    void Runtime.io().notify(text, 'Podium').catch(() => undefined)
   }
 
   static async setNotifying(isOn: boolean): Promise<void> {
     Runtime.isNotifying = isOn
     try {
-      await Runtime.io.storeSet('notifications', isOn)
+      await Runtime.io().storeSet('notifications', isOn)
     } finally {
-      Runtime.io.invalidate()
+      Runtime.io().invalidate()
     }
   }
 
@@ -462,7 +474,7 @@ class Flow {
       return
     }
     if (level <= Runtime.combo) return
-    const now = await Runtime.io.now()
+    const now = await Runtime.io().now()
     if (Runtime.combo === 0 && Runtime.comboAt > 0 && now - Runtime.comboAt < Flow.COMBO_REARM_MS) return
     if (Runtime.combo === 0) Runtime.comboAt = now
     Runtime.combo = level
@@ -483,14 +495,14 @@ class Flow {
     const top = reached[reached.length - 1]
     if (top === undefined) return
     Runtime.toolMilestone = top
-    Flow.celebrate('fireworks', `maestro: ${top} tool calls this session, well done!`)
+    Flow.celebrate('fireworks', `podium: ${top} tool calls this session, well done!`)
   }
 
   static checkAllGreen(verif: FlowVerif): void {
     const key = Rules.shouldCelebrate(verif, Runtime.lastCelebratedKey, Runtime.context?.codeEditedAt ?? 0, Date.now())
     if (key === undefined) return
     Runtime.lastCelebratedKey = key
-    Flow.celebrate('confetti', `maestro: all green, ${key.split(',').length} verification steps passed`)
+    Flow.celebrate('confetti', `podium: all green, ${key.split(',').length} verification steps passed`)
   }
 
   static stamp(): number {
@@ -523,14 +535,14 @@ class Flow {
 
   static async warnDelivery(command: string, agentId: string): Promise<void> {
     if (!Rules.isDelivery(command)) return
-    const gaps = Rules.deliveryGaps(await Runtime.io.readVerif(), Runtime.context?.codeEditedAt ?? 0, Flow.VERIF_LABELS)
+    const gaps = Rules.deliveryGaps(await Runtime.io().readVerif(), Runtime.context?.codeEditedAt ?? 0, Flow.verifLabels())
     const isCommit = /\bgit\s+commit\b/.test(command)
     if (isCommit) {
       const at = gaps.length > 0 ? Date.now() : 0
       await Flow.setContext(c => ({ ...c, staleCommitAt: at }))
     }
     if (gaps.length === 0) return
-    Runtime.io.toast('maestro ! Delivery with a stale verification', { timeoutMs: 6000 })
+    Runtime.io().toast('podium ! Delivery with a stale verification', { timeoutMs: 6000 })
     await Flow.pushEvent(agentId, 'alert', `Delivery with a stale verification: ${gaps.slice(0, 3).join(', ')}`, false)
   }
 
@@ -548,7 +560,7 @@ class Flow {
     if (Runtime.wi === '') return
     const total = Runtime.wiBase + Runtime.wiSessionMs
     try {
-      await Runtime.io.storeSet(`wi-time:${Runtime.wi}`, total)
+      await Runtime.io().storeSet(`wi-time:${Runtime.wi}`, total)
       if (Runtime.context && (Runtime.context.workMs !== total || Runtime.context.sessionWorkMs !== Runtime.sessionWorkMs)) {
         await Flow.setContext(c => ({ ...c, workMs: total, sessionWorkMs: Runtime.sessionWorkMs }))
       }
@@ -557,9 +569,15 @@ class Flow {
     }
   }
 
-  static async git(args: string[]): Promise<string> {
+  private static readonly SAFE_REF = /^[\w./-]+$/
+
+  static isSafeRef(ref: string): boolean {
+    return Flow.SAFE_REF.test(ref) && !ref.startsWith('-')
+  }
+
+  static async stdout(run: () => Promise<ProcessRunResult>): Promise<string> {
     try {
-      const r = await Runtime.io.run(['git', '--no-optional-locks', ...args], { timeoutMs: 10_000 })
+      const r = await run()
       return r.exitCode === 0 ? r.stdout.trim() : ''
     } catch {
       return ''
@@ -583,7 +601,7 @@ class Flow {
 
   static async defaultBase(): Promise<string> {
     if (Runtime.project.hasManifest) return Runtime.project.manifest.git.base
-    const head = await Flow.git(['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'])
+    const head = await Runtime.io().git.originHead()
     return head.replace(/^origin\//, '') || Runtime.project.manifest.git.base
   }
 
@@ -591,14 +609,14 @@ class Flow {
     const base = await Flow.defaultBase()
     const git = Runtime.project.manifest.git
     if ((git.counterpart !== undefined && git.counterpart !== '' && branch.endsWith(git.counterpart)) || Rules.isFeatureBranch(branch)) return base
-    const refs = await Flow.git(['for-each-ref', '--format=%(refname:short)', 'refs/remotes/origin/'])
+    const refs = await Runtime.io().git.remoteBranches()
     const others = refs
       .split(/\r?\n/)
       .map(r => r.trim().replace(/^origin\//, ''))
       .filter(r => r !== '' && r !== base && r !== 'HEAD' && Project.matches(git.support, r))
     const cands = await Promise.all(
       [base, ...others].map(async name => {
-        const out = await Flow.git(['rev-list', '--count', `origin/${name}..HEAD`])
+        const out = await Runtime.io().git.ahead(name)
         const distance = out === '' ? Number.POSITIVE_INFINITY : Number.parseInt(out, 10)
         return { name, distance: Number.isNaN(distance) ? Number.POSITIVE_INFINITY : distance }
       }),
@@ -608,9 +626,9 @@ class Flow {
 
   static async fetchAge(isFull: boolean): Promise<number> {
     try {
-      if (isFull || Runtime.gitDir === '') Runtime.gitDir = await Flow.git(['rev-parse', '--git-common-dir'])
+      if (isFull || Runtime.gitDir === '') Runtime.gitDir = await Runtime.io().git.gitDir()
       if (Runtime.gitDir === '') return -1
-      const stat = await Runtime.io.stat(`${Runtime.gitDir.replace(/[\\/]$/, '')}/FETCH_HEAD`)
+      const stat = await Runtime.io().stat(`${Runtime.gitDir.replace(/[\\/]$/, '')}/FETCH_HEAD`)
       return stat.mtimeMs > 0 ? Math.max(0, Date.now() - stat.mtimeMs) : -1
     } catch {
       return -1
@@ -621,12 +639,12 @@ class Flow {
     if (Runtime.isRefreshing) return
     Runtime.isRefreshing = true
     try {
-      const [branch, status] = await Promise.all([Flow.git(['rev-parse', '--abbrev-ref', 'HEAD']), Flow.git(['status', '--porcelain'])])
+      const [branch, status] = await Promise.all([Runtime.io().git.branch(), Runtime.io().git.status()])
       const previousContext = Runtime.context
       const isBranchChanged = previousContext === undefined || previousContext.branch !== branch
       const known = previousContext?.base ?? ''
       const base = isFull || isBranchChanged || known === '' ? await Flow.detectBase(branch) : known
-      const [counts, fetchAgeMs] = await Promise.all([Flow.git(['rev-list', '--left-right', '--count', `origin/${base}...HEAD`]), Flow.fetchAge(isFull)])
+      const [counts, fetchAgeMs] = await Promise.all([Runtime.io().git.divergence(base), Flow.fetchAge(isFull)])
       const [behind, ahead] = counts.split(/\s+/).map(n => Number.parseInt(n, 10) || 0)
       const paths = status
         .split(/\r?\n/)
@@ -648,12 +666,9 @@ class Flow {
       if (isFull || isNewBranch) {
         const isolation = Runtime.project.manifest.checks.isolation
         const [list, espaces, arch] = await Promise.all([
-          wi === '' ? Promise.resolve('') : Flow.git(['branch', '-a', '--list', `*${wi}*`, '--format=%(refname:short)']),
-          isolation === undefined ? Promise.resolve('') : isolation.enabledBy === undefined ? Promise.resolve('on') : Flow.git(['grep', '-l', '-m', '1', '-E', isolation.enabledBy.pattern, '--', isolation.enabledBy.path || '.']),
-          Runtime.io
-            .run(['uname', '-m'], { timeoutMs: 5000 })
-            .then(r => r.stdout.trim())
-            .catch(() => ''),
+          wi === '' ? Promise.resolve('') : Runtime.io().git.branchesLike(wi),
+          isolation === undefined ? Promise.resolve('') : isolation.enabledBy === undefined ? Promise.resolve('on') : Runtime.io().git.grep(isolation.enabledBy.pattern, isolation.enabledBy.path || '.'),
+          Runtime.io().arch(),
         ])
         related = Array.from(new Set(list.split(/\r?\n/).filter(b => b !== '' && b !== branch)))
         hasEspaces = espaces !== ''
@@ -663,7 +678,7 @@ class Flow {
         await Flow.persistWork()
         Runtime.wi = wi
         Runtime.wiSessionMs = 0
-        const stored = wi === '' ? 0 : await Runtime.io.storeGet(`wi-time:${wi}`)
+        const stored = wi === '' ? 0 : await Runtime.io().storeGet(`wi-time:${wi}`)
         Runtime.wiBase = typeof stored === 'number' ? stored : 0
       }
       await Flow.setContext(c => ({
@@ -693,8 +708,9 @@ class Flow {
   }
 
   static async loadProject(): Promise<void> {
-    const root = await Flow.safely(() => Runtime.io.list('.claude'), [])
-    const raw = await Flow.readText(Project.FILE)
+    const root = await Flow.safely(() => Runtime.io().list('.claude'), [])
+    const current = await Flow.readText(Project.FILE)
+    const raw = current.trim() === '' ? await Flow.readText(Project.LEGACY_FILE) : current
     let manifest: Manifest | undefined
     try {
       manifest = raw === '' ? undefined : Project.parse(JSON.parse(raw), Flow.projectName())
@@ -702,16 +718,16 @@ class Flow {
       manifest = undefined
     }
     const agents: AgentDef[] = []
-    for (const entry of await Flow.safely(() => Runtime.io.list('.claude/agents'), [])) {
+    for (const entry of await Flow.safely(() => Runtime.io().list('.claude/agents'), [])) {
       const name = String((entry as unknown as Loose)['name'] ?? '')
       if (!name.endsWith('.md')) continue
       const def = Project.agentFromMarkdown(name, await Flow.readText(`.claude/agents/${name}`))
       if (def) agents.push(def)
     }
-    const commands = await Flow.safely(() => Runtime.io.commands(), [])
+    const commands = await Flow.safely(() => Runtime.io().commands(), [])
     const local: string[] = []
     for (const folder of ['.claude/skills', '.claude/commands']) {
-      for (const entry of await Flow.safely(() => Runtime.io.list(folder), [])) {
+      for (const entry of await Flow.safely(() => Runtime.io().list(folder), [])) {
         const name = String((entry as unknown as Loose)['name'] ?? '')
         if (name === '' || name.startsWith('.')) continue
         local.push(name.replace(/\.md$/, ''))
@@ -721,7 +737,7 @@ class Flow {
     for (const a of agents) if (a.model) Runtime.models.set(a.name, a.model)
     Rules.configure(Runtime.project, Runtime.cwd)
     Runtime.graphCache = undefined
-    Runtime.io.invalidate()
+    Runtime.io().invalidate()
   }
 
   static async safely<T>(task: () => Promise<T>, fallback: T): Promise<T> {
@@ -742,7 +758,7 @@ class Flow {
 
   static async readText(path: string): Promise<string> {
     try {
-      const r = await Runtime.io.read(path)
+      const r = await Runtime.io().read(path)
       return typeof r === 'string' ? r : String((r as unknown as Loose)['text'] ?? '')
     } catch {
       return ''
@@ -808,13 +824,13 @@ class Flow {
       await Flow.raise(hits, '', agentId)
       await Flow.warnDelivery(command, agentId)
       if (pending.keys.length > 0) {
-        await Runtime.io.verif(v => {
+        await Runtime.io().verif(v => {
           const out = { ...v }
           for (const key of pending.keys) pending.before[key] = v[key]
           for (const key of pending.keys) out[key] = { status: 'running', at: now, durationMs: 0, detail: '', agentId: pending.agentId }
           return out
         })
-        void Flow.pushEvent(agentId, 'verif', `${pending.keys.map(k => Flow.VERIF_LABELS[k]).join(', ')} started${pending.isBackground ? ' (background)' : ''}`, false)
+        void Flow.pushEvent(agentId, 'verif', `${pending.keys.map(k => Flow.verifLabels()[k]).join(', ')} started${pending.isBackground ? ' (background)' : ''}`, false)
       }
     }
   }
@@ -848,7 +864,7 @@ class Flow {
         })
       }
       if (isDenied) {
-        await Runtime.io.verif(v => {
+        await Runtime.io().verif(v => {
           const out = { ...v }
           for (const key of pending.keys) {
             const previous = pending.before[key]
@@ -861,17 +877,17 @@ class Flow {
         const isKo = Rules.isFailure(output, isError)
         const detail = isKo ? Rules.failureDetail(output) : ''
         const at = Flow.stamp()
-        const verif = await Runtime.io.verif(v => {
+        const verif = await Runtime.io().verif(v => {
           const out = { ...v }
           for (const key of pending.keys) out[key] = { status: isKo ? 'ko' : 'ok', at, durationMs: Math.max(0, at - pending.at), detail, agentId: pending.agentId }
           return out
         })
         await Flow.verifCompleted(pending.at)
         Flow.checkAllGreen(verif)
-        const names = pending.keys.map(k => Flow.VERIF_LABELS[k]).join(', ')
+        const names = pending.keys.map(k => Flow.verifLabels()[k]).join(', ')
         void Flow.pushEvent(pending.agentId, 'verif', `${names} ${isKo ? 'failed' : 'OK'} (${Theme.duration(now - pending.at)})`, isKo)
         if (isKo) {
-          void Runtime.io.toast(`maestro ✗ ${names} failed`, { timeoutMs: 6000 })
+          void Runtime.io().toast(`podium ✗ ${names} failed`, { timeoutMs: 6000 })
           Flow.notify(`${names} failed`)
         }
       }
@@ -881,7 +897,7 @@ class Flow {
       const command = Flow.field(e, 'command')
       if (Rules.isImageBuild(command)) await Flow.setContext(c => ({ ...c, imageBuiltAt: now }))
       if (Rules.PR_CREATE.test(command)) {
-        Flow.celebrate('rocket', 'maestro: PR created, on its way to review')
+        Flow.celebrate('rocket', 'podium: PR created, on its way to review')
         Flow.notify('PR created, on its way to review')
       }
       await Flow.treeChanged(pending)
@@ -943,7 +959,7 @@ class Flow {
     const word = status === 'completed' ? 'completed' : status === 'failed' ? 'failed' : 'interrupted'
     void Flow.pushEvent(id, 'end', `${agent.type} ${word} (${Theme.duration(now - agent.startedAt)})`, status === 'failed')
     if (status === 'failed') {
-      void Runtime.io.toast(`maestro ✗ ${agent.type} failed`, { timeoutMs: 6000 })
+      void Runtime.io().toast(`podium ✗ ${agent.type} failed`, { timeoutMs: 6000 })
       Flow.notify(`${agent.type} failed`)
     }
     await Flow.publishStatus()
@@ -953,7 +969,7 @@ class Flow {
     const agent = Runtime.agents.find(a => a.id === id)
     if (!agent || !Project.isReviewer(Runtime.project, agent.type) || answer.trim() === '') return
     const review: FlowReview = { agentId: id, type: agent.type, at: Flow.stamp(), ...Rules.review(answer) }
-    await Runtime.io.reviews(list => [...list.filter(r => r.agentId !== id), review].slice(-12))
+    await Runtime.io().reviews(list => [...list.filter(r => r.agentId !== id), review].slice(-12))
     if (review.verdict === 'FAIL' || review.critical > 0) Flow.notify(`${agent.type}: ${review.verdict || 'review'}${View.reviewCounts(review) !== '' ? ` · ${View.reviewCounts(review)}` : ''}`)
   }
 
@@ -961,7 +977,7 @@ class Flow {
     const found: TaskNotification[] = []
     for (const match of text.matchAll(/<task-notification>([\s\S]*?)(?:<\/task-notification>|$)/g)) {
       const block = match[1] ?? ''
-      const tag = (name: string): string => new RegExp(`<${name}>([\\s\\S]*?)</${name}>`).exec(block)?.[1]?.trim() ?? ''
+      const tag = (name: string): string => block.match(new RegExp(`<${name}>([\\s\\S]*?)</${name}>`))?.[1]?.trim() ?? ''
       const taskId = tag('task-id')
       if (taskId === '') continue
       found.push({ taskId, status: tag('status').toLowerCase(), body: [tag('summary'), tag('result')].filter(t => t !== '').join('\n'), outputFile: tag('output-file') })
@@ -997,7 +1013,7 @@ class Flow {
   }
 
   static async settleVerif(entry: BackgroundVerif, status: VerifStatus, now: number, detail = ''): Promise<FlowVerif> {
-    return Runtime.io.verif(v => {
+    return Runtime.io().verif(v => {
       const out = { ...v }
       for (const key of entry.keys) {
         const step = out[key]
@@ -1027,10 +1043,10 @@ class Flow {
     const verif = await Flow.settleVerif(entry, isKo ? 'ko' : 'ok', Flow.stamp(), detail)
     await Flow.verifCompleted(entry.at)
     Flow.checkAllGreen(verif)
-    const names = entry.keys.map(k => Flow.VERIF_LABELS[k]).join(', ')
+    const names = entry.keys.map(k => Flow.verifLabels()[k]).join(', ')
     void Flow.pushEvent(entry.agentId, 'verif', `Background task ${isKo ? 'failed' : 'completed'}: ${names} (${Theme.duration(now - entry.at)})`, isKo)
     if (isKo) {
-      Runtime.io.toast(`maestro ✗ ${names} failed`, { timeoutMs: 6000 })
+      Runtime.io().toast(`podium ✗ ${names} failed`, { timeoutMs: 6000 })
       Flow.notify(`${names} failed (background task)`)
     }
   }
@@ -1038,10 +1054,10 @@ class Flow {
   static async settleOrphans(): Promise<void> {
     try {
       const tracked = new Set(Array.from(Runtime.backgroundVerifs.values()).flatMap(entry => entry.keys))
-      const verif = await Runtime.io.readVerif()
+      const verif = await Runtime.io().readVerif()
       const orphans = (Object.keys(verif) as VerifKey[]).filter(k => verif[k].status === 'running' && !tracked.has(k))
       if (orphans.length === 0) return
-      await Runtime.io.verif(v => {
+      await Runtime.io().verif(v => {
         const out = { ...v }
         for (const k of orphans) if (out[k].status === 'running') out[k] = { ...out[k], status: 'stale' }
         return out
@@ -1058,10 +1074,10 @@ class Flow {
       Runtime.backgroundVerifs.delete(key)
       await Flow.settleVerif(entry, 'stale', now)
     }
-    const verif = await Runtime.io.readVerif()
+    const verif = await Runtime.io().readVerif()
     const isOrphan = (Object.keys(verif) as VerifKey[]).some(k => verif[k].status === 'running' && now - verif[k].at >= Flow.BACKGROUND_EXPIRY_MS)
     if (!isOrphan) return
-    await Runtime.io.verif(v => {
+    await Runtime.io().verif(v => {
       const out = { ...v }
       for (const k of Object.keys(out) as VerifKey[]) {
         if (out[k].status === 'running' && now - out[k].at >= Flow.BACKGROUND_EXPIRY_MS) out[k] = { ...out[k], status: 'stale' }
@@ -1081,7 +1097,7 @@ class Flow {
     const reported = typeof usage?.['model'] === 'string' ? (usage['model'] as string) : ''
     const model = reported || Flow.agentModel(agentId)
     if (usage) {
-      await Runtime.io.usage(list => {
+      await Runtime.io().usage(list => {
         const found = list.find(u => u.model === model)
         const base: FlowUsage = found ?? { model, tokensIn: 0, tokensOut: 0, cacheRead: 0, cacheWrite: 0, turns: 0, durationMs: 0 }
         const next: FlowUsage = {
@@ -1124,7 +1140,7 @@ class Flow {
   static async sync(): Promise<void> {
     void Flow.ensurePane()
     try {
-      const list = await Runtime.io.agentList()
+      const list = await Runtime.io().agentList()
       for (const info of list) {
         const known = Runtime.agents.find(a => a.id === info.id)
         if (!known) {
@@ -1174,8 +1190,8 @@ class Flow {
   }
 
   static async detectRenderMode(): Promise<void> {
-    const stored = await Runtime.io.storeGet('render-mode')
-    if (stored === 'hd') await Runtime.io.storeSet('render-mode', '')
+    const stored = await Runtime.io().storeGet('render-mode')
+    if (stored === 'hd') await Runtime.io().storeSet('render-mode', '')
     if (stored === 'quad' || stored === 'half') {
       Runtime.renderMode = stored
       Runtime.isRenderForced = true
@@ -1188,17 +1204,17 @@ class Flow {
 
   static async forceRenderMode(mode: RenderMode | 'auto'): Promise<void> {
     if (mode === 'auto' || mode === 'hd') {
-      await Runtime.io.storeSet('render-mode', '')
+      await Runtime.io().storeSet('render-mode', '')
       Runtime.renderMode = 'quad'
       Runtime.isRenderForced = false
     } else {
-      await Runtime.io.storeSet('render-mode', mode)
+      await Runtime.io().storeSet('render-mode', mode)
       Runtime.renderMode = mode
       Runtime.isRenderForced = true
     }
     Flow.restartTicker()
     Runtime.denies = 0
-    Runtime.io.invalidate()
+    Runtime.io().invalidate()
   }
 
   static frameAt(at: number): number {
@@ -1241,17 +1257,17 @@ class Flow {
   }
 
   static async dressUp(worn: string, isChange: boolean): Promise<string> {
-    const stored = await Runtime.io.storeGet('accessories').catch(() => undefined)
+    const stored = await Runtime.io().storeGet('accessories').catch(() => undefined)
     const recent = Array.isArray(stored) ? stored.filter((v): v is string => typeof v === 'string') : []
     const id = !isChange && Accessories.find(worn) ? worn : Accessories.pick(recent, Math.random())
-    if (id !== worn) await Runtime.io.storeSet('accessories', Accessories.remember(recent, id)).catch(() => undefined)
+    if (id !== worn) await Runtime.io().storeSet('accessories', Accessories.remember(recent, id)).catch(() => undefined)
     Robots.wear(id)
     Runtime.graphCache = undefined
     return id
   }
 
   static async loadFps(): Promise<void> {
-    Runtime.fps = Flow.parseFps(await Runtime.io.storeGet('fps').catch(() => undefined)) ?? Flow.DEFAULT_FPS
+    Runtime.fps = Flow.parseFps(await Runtime.io().storeGet('fps').catch(() => undefined)) ?? Flow.DEFAULT_FPS
     Runtime.fpsLimit = Flow.MAX_FPS
     Runtime.slowTicks = 0
   }
@@ -1260,9 +1276,9 @@ class Flow {
     Runtime.fps = fps
     Runtime.fpsLimit = Flow.MAX_FPS
     Runtime.slowTicks = 0
-    await Runtime.io.storeSet('fps', fps)
+    await Runtime.io().storeSet('fps', fps)
     Flow.restartTicker()
-    Runtime.io.invalidate()
+    Runtime.io().invalidate()
   }
 
   static restartTicker(): void {
@@ -1273,7 +1289,7 @@ class Flow {
     Runtime.tickMs = Flow.tickInterval(now)
     Runtime.retargetAt = now
     try {
-      Runtime.ticker = Runtime.io.every(Runtime.tickMs, () => void Flow.tick())
+      Runtime.ticker = Runtime.io().every(Runtime.tickMs, () => void Flow.tick())
     } catch {
       Runtime.ticker = undefined
     }
@@ -1302,7 +1318,7 @@ class Flow {
     if (current <= Flow.GUARD_MIN_FPS) return
     Runtime.fpsLimit = Math.max(Flow.GUARD_MIN_FPS, current - Flow.FPS_STEP)
     Flow.restartTicker()
-    Runtime.io.invalidate()
+    Runtime.io().invalidate()
   }
 
   static ambience(now: number, at: number): Ambience {
@@ -1385,7 +1401,7 @@ class Flow {
     if (now - Runtime.stageInvalidatedAt < Flow.STAGE_INVALIDATE_MS) return
     Runtime.stageKey = key
     Runtime.stageInvalidatedAt = now
-    Runtime.io.invalidate()
+    Runtime.io().invalidate()
   }
 
   static async tick(): Promise<void> {
@@ -1413,7 +1429,7 @@ class Flow {
       Runtime.graphCache = { key: Flow.graphKey(), result: graph }
       const encoded = graph.encoded
       if (encoded.kind !== 'cells') return
-      const result = await Runtime.io.blit({ requestId: PANE, key: Runtime.mode, cells: encoded.cells, columns: Runtime.columns, rows: Runtime.rows })
+      const result = await Runtime.io().blit({ requestId: PANE, key: Runtime.mode, cells: encoded.cells, columns: Runtime.columns, rows: Runtime.rows })
       if (result.deny) {
         Flow.onDeny()
       } else {
@@ -1436,7 +1452,7 @@ class Flow {
       return
     }
     Runtime.invalidatedAt = now
-    Runtime.io.invalidate()
+    Runtime.io().invalidate()
   }
 
   static phaseIndex(type: string): number {
@@ -1502,7 +1518,7 @@ class Flow {
   static async placePane(): Promise<boolean> {
     Runtime.openAttempts++
     try {
-      Runtime.isPlaced = await Runtime.io.open()
+      Runtime.isPlaced = await Runtime.io().open()
     } catch {
       Runtime.isPlaced = false
     }
@@ -1522,11 +1538,11 @@ class Flow {
     Runtime.backgroundVerifs.clear()
     Runtime.buffer = []
     await Flow.setAgents(() => [])
-    Runtime.events = await Runtime.io.events(() => [])
-    await Runtime.io.alerts(() => [])
-    await Runtime.io.reviews(() => [])
-    await Runtime.io.usage(() => [])
-    await Runtime.io.verif(v => {
+    Runtime.events = await Runtime.io().events(() => [])
+    await Runtime.io().alerts(() => [])
+    await Runtime.io().reviews(() => [])
+    await Runtime.io().usage(() => [])
+    await Runtime.io().verif(v => {
       const out = { ...v }
       for (const k of Object.keys(out) as VerifKey[]) out[k] = { status: 'idle', at: 0, durationMs: 0, detail: '', agentId: '' }
       return out
@@ -1699,12 +1715,12 @@ class View {
   }
 
   static stepNames(keys: VerifKey[], isLower: boolean): string {
-    return keys.map(k => (isLower ? Flow.VERIF_LABELS[k].toLowerCase() : Flow.VERIF_LABELS[k])).join(', ')
+    return keys.map(k => (isLower ? Flow.verifLabels()[k].toLowerCase() : Flow.verifLabels()[k])).join(', ')
   }
 
   static failedGroups(verif: FlowVerif): { keys: VerifKey[]; at: number; detail: string; agentId: string }[] {
     const groups: { keys: VerifKey[]; at: number; detail: string; agentId: string }[] = []
-    for (const k of Object.keys(Flow.VERIF_LABELS) as VerifKey[]) {
+    for (const k of Object.keys(Flow.verifLabels()) as VerifKey[]) {
       const step = verif[k]
       if (step.status !== 'ko') continue
       const group = groups.find(g => g.at === step.at)
@@ -1736,7 +1752,7 @@ class View {
     const right = [status, ...tail, ...fps]
     const wi = data.context.wi !== '' ? `#${data.context.wi}` : ''
     const phase = View.headerPhase(data.agents)
-    const brand = View.width('◆ MAESTRO') + (Flow.isReplay() ? 8 : 0)
+    const brand = View.width('◆ PODIUM') + (Flow.isReplay() ? 8 : 0)
     const room = width - brand - View.partsWidth(right) - 3
     const variants = [[wi, phase].filter(t => t !== '').join(' · '), wi, '']
     const context = variants.find(v => (v === '' ? 0 : v.length + 2) <= room) ?? ''
@@ -1744,7 +1760,7 @@ class View {
       <Box justifyContent="space-between" width={width}>
         <Text>
           <Text color={View.hex(Theme.ORCH)} bold>
-            ◆ MAESTRO
+            ◆ PODIUM
           </Text>
           {Flow.isReplay() && (
             <Text color={View.hex(Theme.BG_TOP)} backgroundColor={View.hex(Theme.WARN)}>
@@ -2024,9 +2040,9 @@ class View {
     const isFailed = failedVerif || run.some(a => a.status === 'failed' || a.status === 'killed')
     const wi = data.context.wi !== '' ? `#${data.context.wi} · ` : ''
     const summary = `${isFailed ? '✗' : '✓'} ${wi}${View.plural(run.length, 'agent')} · ${Theme.duration(end - start)} · finished at ${View.hm(end)}`
-    const steps = (Object.keys(Flow.VERIF_LABELS) as VerifKey[]).filter(k => data.verif[k].status === 'ok' || data.verif[k].status === 'ko')
-    const ok = steps.filter(k => data.verif[k].status === 'ok').map(k => Flow.VERIF_LABELS[k].toLowerCase())
-    const ko = steps.filter(k => data.verif[k].status === 'ko').map(k => Flow.VERIF_LABELS[k].toLowerCase())
+    const steps = (Object.keys(Flow.verifLabels()) as VerifKey[]).filter(k => data.verif[k].status === 'ok' || data.verif[k].status === 'ko')
+    const ok = steps.filter(k => data.verif[k].status === 'ok').map(k => Flow.verifLabels()[k].toLowerCase())
+    const ko = steps.filter(k => data.verif[k].status === 'ko').map(k => Flow.verifLabels()[k].toLowerCase())
     const verifPart = steps.length === 0 ? '' : `Verif${ok.length > 0 ? ` ✓ ${ok.join(' ')}` : ''}${ko.length > 0 ? ` ✗ ${ko.join(' ')}` : ''}`
     const reviews = View.latestReviews(data.reviews).reverse()
     const reviewPart = reviews.length === 0 ? '' : `Reviews ${reviews.map(r => `${View.verdictGlyph(r)} ${View.reviewTiny(r.type)}`).join(' ')}`
@@ -2141,7 +2157,7 @@ class View {
 
   static verifRow(ui: Ui, key: VerifKey, step: FlowVerifStep, codeEditedAt: number, width: number): RenderElement[] {
     const { Text } = ui
-    const label = Theme.pad(Flow.VERIF_LABELS[key], 8)
+    const label = Theme.pad(Flow.verifLabels()[key], 8)
     const isStale = Rules.isStale(step, codeEditedAt)
     const glyph = isStale ? '≈' : Theme.verifGlyph(step.status)
     const color = isStale ? Theme.WARN : Theme.verifColor(step.status)
@@ -2236,7 +2252,7 @@ class View {
   }
 
   static dismiss(alertId: string): void {
-    void Runtime.io.alerts(list => list.filter(a => a.id !== alertId)).then(() => Flow.publishStatus())
+    void Runtime.io().alerts(list => list.filter(a => a.id !== alertId)).then(() => Flow.publishStatus())
   }
 
   static alertRows(ui: Ui, width: number, alert: FlowAlert): RenderElement {
@@ -2296,7 +2312,7 @@ class View {
     }
     out.push(
       <Box key="rules-actions" columnGap={2}>
-        <Button key="clear" plain hotkey="x" onPress={() => void Runtime.io.alerts(() => []).then(() => Flow.publishStatus())}>
+        <Button key="clear" plain hotkey="x" onPress={() => void Runtime.io().alerts(() => []).then(() => Flow.publishStatus())}>
           <Text color={View.hex(Theme.TEXT)}>Clear all</Text>
         </Button>
         <Button key="why" plain hotkey="h" onPress={() => void Flow.setView(v => ({ ...v, isWhyShown: !v.isWhyShown }))}>
@@ -2614,24 +2630,24 @@ class View {
   static nextStep(data: Snapshot): { text: string; role?: RoleId; command?: string } {
     const project = Runtime.project
     const cmd = (role: RoleId): string | undefined => Project.command(project, role)
-    if (!project.hasClaude) return { text: 'Project without .claude/: run /maestro', role: 'setup', command: 'maestro' }
+    if (!project.hasClaude) return { text: 'Project without .claude/: run /podium', role: 'setup', command: 'podium' }
     if (data.agents.some(a => a.status === 'running')) return { text: 'Orchestration in progress' }
     const failing = (Object.keys(data.verif) as VerifKey[]).filter(k => data.verif[k].status === 'ko')
     if (failing.length > 0) {
       const role: RoleId = cmd('fix') ? 'fix' : 'investigate'
-      return { text: `Verification failed (${failing.map(k => Flow.VERIF_LABELS[k]).join(', ')}): fix`, role, command: cmd(role) }
+      return { text: `Verification failed (${failing.map(k => Flow.verifLabels()[k]).join(', ')}): fix`, role, command: cmd(role) }
     }
     if (data.reviews.some(r => r.verdict === 'FAIL')) return { text: 'Review failed: address the findings', role: 'fix', command: cmd('fix') }
     if (project.manifest.stage === 'genesis') {
       const steps: RoleId[] = ['kickoff', 'stack', 'foundations']
       const first = steps.find(r => cmd(r) !== undefined)
-      return { text: 'Project starting: scoping → technical choices → foundations, then /maestro', role: first, command: first ? cmd(first) : 'maestro' }
+      return { text: 'Project starting: scoping → technical choices → foundations, then /podium', role: first, command: first ? cmd(first) : 'podium' }
     }
     const verified = (['build', 'unit'] as VerifKey[]).every(k => data.verif[k].status === 'ok')
     if (data.context.changes > 0 && verified && cmd('deliver')) return { text: 'Verifications green: deliver', role: 'deliver', command: cmd('deliver') }
     if (data.context.changes > 0 && !verified) return { text: 'Changes in progress: run the verification', role: 'feature' }
     const starters = (['feature', 'fix', 'investigate'] as RoleId[]).map(r => cmd(r)).filter((c): c is string => c !== undefined)
-    if (starters.length === 0) return { text: 'Nothing in progress: run /maestro to set up the project', role: 'setup', command: 'maestro' }
+    if (starters.length === 0) return { text: 'Nothing in progress: run /podium to set up the project', role: 'setup', command: 'podium' }
     return { text: `Nothing in progress: run ${starters.slice(0, 2).map(c => `/${c}`).join(' or ')}.`, role: 'feature', command: starters[0] }
   }
 
@@ -2640,7 +2656,7 @@ class View {
     const group = Project.groups(project).find(g => g.id === 'project')
     if (group) return group.commands.filter(c => !View.isOwnPanel(c.name))
     return Object.entries(project.manifest.roles)
-      .filter(([, c]) => c !== undefined && c !== '' && c !== 'maestro' && !View.isOwnPanel(c))
+      .filter(([, c]) => c !== undefined && c !== '' && c !== 'podium' && !View.isOwnPanel(c))
       .map(([role, name]) => ({ name: name ?? '', description: '', source: 'user', role: role as RoleId }))
   }
 
@@ -2658,7 +2674,7 @@ class View {
         const about = View.firstSentence(c.description) || (c.role ? Project.ROLE_LABELS[c.role] : '')
         return (
           <Box key={`strip-${c.name}`}>
-            <Button key={`strip-cmd-${c.name}`} plain onPress={() => void Runtime.io.fill(`/${c.name} `)}>
+            <Button key={`strip-cmd-${c.name}`} plain onPress={() => void Runtime.io().fill(`/${c.name} `)}>
               <Text color={View.hex(Theme.ORCH)}>{head}</Text>
             </Button>
             <Text color={View.hex(Theme.MUTED)}>{` ${Theme.truncate(about, Math.max(0, width - View.width(head) - 1))}`}</Text>
@@ -2674,13 +2690,13 @@ class View {
 
   static firstSentence(text: string): string {
     const clean = text.replace(/\s+/g, ' ').trim()
-    const cut = /^(.+?[.!?])(\s|$)/.exec(clean)?.[1] ?? clean
+    const cut = clean.match(/^(.+?[.!?])(\s|$)/)?.[1] ?? clean
     return cut.replace(/[.]$/, '')
   }
 
   static startHint(): string {
     const starters = (['feature', 'fix'] as RoleId[]).map(r => Project.command(Runtime.project, r)).filter((c): c is string => c !== undefined)
-    if (starters.length === 0) return Runtime.project.hasClaude ? 'Nothing in progress.' : 'Nothing in progress: run /maestro to set up the project.'
+    if (starters.length === 0) return Runtime.project.hasClaude ? 'Nothing in progress.' : 'Nothing in progress: run /podium to set up the project.'
     return `Nothing in progress: run ${starters.map(c => `/${c}`).join(' or ')}.`
   }
 
@@ -2695,7 +2711,7 @@ class View {
     const { Box, Button, Text } = ui
     Runtime.mode = 'none'
     const project = Runtime.project
-    const fill = (name: string): void => void Runtime.io.fill(`/${name} `)
+    const fill = (name: string): void => void Runtime.io().fill(`/${name} `)
     const out: RenderElement[] = []
     const next = View.nextStep(data)
     out.push(View.rule(ui, 'NEXT STEP', width, View.stageLabel()))
@@ -2831,7 +2847,7 @@ class Recap {
   private static recap(data: Snapshot, now: number): string {
     const c = data.context
     const lines: string[] = [
-      `Maestro — ${c.wi !== '' ? `WI #${c.wi}` : 'No work item'} · ${c.branch || '…'} (vs ${c.base || Runtime.project.manifest.git.base})`,
+      `Podium — ${c.wi !== '' ? `WI #${c.wi}` : 'No work item'} · ${c.branch || '…'} (vs ${c.base || Runtime.project.manifest.git.base})`,
       `Time spent: ${c.wi !== '' ? `WI #${c.wi}` : 'work item'} ${Theme.duration(c.workMs)} · session ${Theme.duration(c.sessionWorkMs)}`,
       '',
       ...Recap.agents(data.agents, now),
@@ -2862,20 +2878,20 @@ class Recap {
   }
 
   private static verif(data: Snapshot): string[] {
-    const keys = Object.keys(Flow.VERIF_LABELS) as VerifKey[]
+    const keys = Object.keys(Flow.verifLabels()) as VerifKey[]
     return [
       'Verification:',
       ...keys.map(k => {
         const step = data.verif[k]
-        if (Rules.isStale(step, data.context.codeEditedAt)) return `  ≈ ${Flow.VERIF_LABELS[k]} : ${View.staleNote(data.context.editsSinceVerif)}`
+        if (Rules.isStale(step, data.context.codeEditedAt)) return `  ≈ ${Flow.verifLabels()[k]} : ${View.staleNote(data.context.editsSinceVerif)}`
         const status = step.status === 'idle' ? 'not run' : step.status === 'running' ? 'running' : step.status === 'ok' ? 'OK' : step.status === 'stale' ? 'no result' : 'FAILED'
-        return `  ${Theme.verifGlyph(step.status)} ${Flow.VERIF_LABELS[k]} : ${status}${step.durationMs > 0 ? ` (${Theme.duration(step.durationMs)})` : ''}`
+        return `  ${Theme.verifGlyph(step.status)} ${Flow.verifLabels()[k]} : ${status}${step.durationMs > 0 ? ` (${Theme.duration(step.durationMs)})` : ''}`
       }),
     ]
   }
 
   private static readiness(data: Snapshot): string {
-    const readiness = Rules.readiness(data.verif, data.reviews, data.context.codeEditedAt, Flow.VERIF_LABELS)
+    const readiness = Rules.readiness(data.verif, data.reviews, data.context.codeEditedAt, Flow.verifLabels())
     if (readiness.state === 'ready') return '✓ Ready to deliver'
     if (readiness.state === 'reviews') return '… reviews to do'
     return `◌ Not ready yet: ${readiness.reasons.join(', ')}`
@@ -2934,12 +2950,12 @@ export const register: Register = on => {
     Runtime.lastBlitAt = 0
     Runtime.isWanted = false
     await $.command.register({
-      name: 'maestro-stage',
+      name: 'podium-stage',
       description: 'Live side panel of the agents (tabs: flow, delivery, history, context, tools; reset to clear)',
       argumentHint: '[flow|delivery|history|context|tools|recap|accessory [name|list]|notify on|notify off|reset|disco|quad|half|auto|fps <10-60>]',
     })
     await $.command.register({
-      name: 'maestro',
+      name: 'podium',
       description: 'Builds or adapts the project .claude/ setup (agents, skills, hooks, rules) following the orchestrator vision',
       argumentHint: '[new|existing|update|audit]',
     })
@@ -2971,7 +2987,33 @@ export const register: Register = on => {
       status: text => $.ui.status(text),
       storeGet: key => $.store.get(key),
       storeSet: (key, value) => $.store.set(key, value),
-      run: (argv, init) => $.process.run(argv, init),
+      git: {
+        head: () => Flow.stdout(() => $.process.run(['git', '--no-optional-locks', 'rev-parse', 'HEAD'], { timeoutMs: 10_000 })),
+        branch: () => Flow.stdout(() => $.process.run(['git', '--no-optional-locks', 'rev-parse', '--abbrev-ref', 'HEAD'], { timeoutMs: 10_000 })),
+        status: () => Flow.stdout(() => $.process.run(['git', '--no-optional-locks', 'status', '--porcelain'], { timeoutMs: 10_000 })),
+        gitDir: () => Flow.stdout(() => $.process.run(['git', '--no-optional-locks', 'rev-parse', '--git-common-dir'], { timeoutMs: 10_000 })),
+        originHead: () => Flow.stdout(() => $.process.run(['git', '--no-optional-locks', 'symbolic-ref', '--short', 'refs/remotes/origin/HEAD'], { timeoutMs: 10_000 })),
+        remoteBranches: () => Flow.stdout(() => $.process.run(['git', '--no-optional-locks', 'for-each-ref', '--format=%(refname:short)', 'refs/remotes/origin/'], { timeoutMs: 10_000 })),
+        ahead: async base => {
+          if (!Flow.isSafeRef(base)) return ''
+          return Flow.stdout(() => $.process.run(['git', '--no-optional-locks', 'rev-list', '--count', `origin/${base}..HEAD`], { timeoutMs: 10_000 }))
+        },
+        divergence: async base => {
+          if (!Flow.isSafeRef(base)) return ''
+          return Flow.stdout(() => $.process.run(['git', '--no-optional-locks', 'rev-list', '--left-right', '--count', `origin/${base}...HEAD`], { timeoutMs: 10_000 }))
+        },
+        branchesLike: async wi => {
+          if (!Flow.isSafeRef(wi)) return ''
+          return Flow.stdout(() => $.process.run(['git', '--no-optional-locks', 'branch', '-a', '--list', `*${wi}*`, '--format=%(refname:short)'], { timeoutMs: 10_000 }))
+        },
+        grep: (pattern, path) =>
+          Flow.stdout(() => $.process.run(['git', '--no-optional-locks', 'grep', '-l', '-m', '1', '-E', '-e', pattern, '--', path], { timeoutMs: 10_000 })),
+      },
+      arch: () =>
+        $.process
+          .run(['uname', '-m'], { timeoutMs: 5000 })
+          .then(r => r.stdout.trim())
+          .catch(() => ''),
       now: () => $.clock.now().catch(() => Date.now()),
       list: path => $.fs.list(path),
       read: path => $.fs.read(path),
@@ -2983,7 +3025,7 @@ export const register: Register = on => {
       agentList: () => $.agent.list(),
       blit: args => $.ui.blit(args),
       every: (ms, fn) => $.clock.every(ms, fn),
-      open: () => $.ui.open({ id: PANE, title: 'Maestro', backgroundColor: Theme.BACKDROP, columns: 84 }).then(r => r.isPlaced),
+      open: () => $.ui.open({ id: PANE, title: 'Podium', backgroundColor: Theme.BACKDROP, columns: 84 }).then(r => r.isPlaced),
       invalidate: () => $.ui.invalidate('ui.render'),
       termProgram: () => $.env.get('TERM_PROGRAM'),
       term: () => $.env.get('TERM'),
@@ -3026,16 +3068,16 @@ export const register: Register = on => {
     return next(e)
   })
 
-  on('command.run', { command: 'maestro' }, async ($, e) => {
+  on('command.run', { command: 'podium' }, async ($, e) => {
     const args = e.args.trim()
     const line = `/${Flow.SKILL}${args === '' ? '' : ` ${args}`}`
     $.clock.after(50, () => {
-      void $.command.run({ command: Flow.SKILL, args }).catch(() => $.prompt.submit({ text: line }))
+      void $.command.run({ command: Flow.SKILL, args }).catch(() => $.prompt.fill({ text: line }).catch(() => undefined))
     })
-    return { text: `Maestro${args === '' ? '' : ` (${args})`}: launching ${line}` }
+    return { text: `Podium${args === '' ? '' : ` (${args})`}: launching ${line}` }
   })
 
-  on('command.run', { command: 'maestro-stage' }, async ($, e) => {
+  on('command.run', { command: 'podium-stage' }, async ($, e) => {
     const arg = e.args.trim().toLowerCase()
     if (arg === 'hd') {
       await Flow.forceRenderMode('hd')
@@ -3045,20 +3087,20 @@ export const register: Register = on => {
     if (arg === 'quad' || arg === 'half' || arg === 'auto') {
       await Flow.forceRenderMode(arg)
       await Flow.openPane()
-      return { text: `Maestro: ${arg === 'auto' ? `automatic (${Runtime.renderMode})` : arg} rendering.` }
+      return { text: `Podium: ${arg === 'auto' ? `automatic (${Runtime.renderMode})` : arg} rendering.` }
     }
     if (arg === 'fps' || arg.startsWith('fps ')) {
       const wanted = arg.slice('fps'.length).trim()
-      if (wanted === '') return { text: `Maestro: ${Flow.effectiveFps()} fps (max ${Runtime.fps}, ${Runtime.renderMode.toUpperCase()}).` }
+      if (wanted === '') return { text: `Podium: ${Flow.effectiveFps()} fps (max ${Runtime.fps}, ${Runtime.renderMode.toUpperCase()}).` }
       const fps = Flow.parseFps(wanted)
-      if (fps === undefined) return { text: `Maestro: fps expected between ${Flow.MIN_FPS} and ${Flow.MAX_FPS}.` }
+      if (fps === undefined) return { text: `Podium: fps expected between ${Flow.MIN_FPS} and ${Flow.MAX_FPS}.` }
       await Flow.setFps(fps)
       const capped = Flow.fpsCap() < fps ? ` (capped at ${Flow.fpsCap()} in ${Runtime.renderMode.toUpperCase()})` : ''
-      return { text: `Maestro: ${fps} fps max${capped}.` }
+      return { text: `Podium: ${fps} fps max${capped}.` }
     }
     if (arg === 'recap') {
       await Flow.refreshContext(false)
-      const recap = Recap.text(await Runtime.io.snapshot(), Date.now())
+      const recap = Recap.text(await Runtime.io().snapshot(), Date.now())
       const copied = await $.ui.copy({ text: recap }).catch(() => undefined)
       return { text: Recap.answer(recap, copied) }
     }
@@ -3066,36 +3108,36 @@ export const register: Register = on => {
       const wanted = arg.slice('notify'.length).trim()
       const isOn = wanted === 'on' ? true : wanted === 'off' ? false : !Runtime.isNotifying
       await Flow.setNotifying(isOn)
-      return { text: `Maestro: notifications ${isOn ? 'enabled' : 'disabled'}.` }
+      return { text: `Podium: notifications ${isOn ? 'enabled' : 'disabled'}.` }
     }
     if (arg === 'reset') {
       await Flow.enqueue(() => Flow.reset())
-      return { text: 'Maestro reset.' }
+      return { text: 'Podium reset.' }
     }
     if (arg === 'accessory' || arg.startsWith('accessory ')) {
       const wanted = arg.slice('accessory'.length).trim()
       const names = Accessories.ALL.map(a => a.id).join(', ')
-      if (wanted === 'list') return { text: `Maestro: ${Accessories.ALL.length} accessories (${names}).` }
+      if (wanted === 'list') return { text: `Podium: ${Accessories.ALL.length} accessories (${names}).` }
       const target = wanted === '' ? undefined : Accessories.find(wanted)
-      if (wanted !== '' && target === undefined) return { text: `Maestro: unknown accessory. Available: ${names}.` }
+      if (wanted !== '' && target === undefined) return { text: `Podium: unknown accessory. Available: ${names}.` }
       if (target) Robots.wear(target.id)
       const id = target ? target.id : await Flow.dressUp(Robots.wearing(), true)
       await update($, accessoryAtom, () => id)
       Runtime.graphCache = undefined
-      Runtime.io.invalidate()
-      return { text: `Maestro: ${Accessories.find(id)?.label ?? id} for this session.` }
+      Runtime.io().invalidate()
+      return { text: `Podium: ${Accessories.find(id)?.label ?? id} for this session.` }
     }
     if (arg === 'disco') {
       Runtime.isDisco = !Runtime.isDisco
-      Runtime.io.toast(`maestro: disco mode ${Runtime.isDisco ? 'on' : 'off'}`, { timeoutMs: 4000 })
-      Runtime.io.invalidate()
-      return { text: `Maestro: disco mode ${Runtime.isDisco ? 'on' : 'off'}.` }
+      Runtime.io().toast(`podium: disco mode ${Runtime.isDisco ? 'on' : 'off'}`, { timeoutMs: 4000 })
+      Runtime.io().invalidate()
+      return { text: `Podium: disco mode ${Runtime.isDisco ? 'on' : 'off'}.` }
     }
     const alias = Flow.ALIASES[arg]
     const tab = alias === undefined ? undefined : Flow.TABS.find(t => t.id === alias.tab)
     if (alias !== undefined) await Flow.setView(v => ({ ...v, tab: alias.tab, mode: alias.mode ?? v.mode }))
     const isPlaced = await Flow.openPane()
-    return { text: isPlaced ? `Maestro opened${tab ? ` on the ${tab.label} tab` : ''}.` : 'Maestro is waiting for a wider terminal to place itself.' }
+    return { text: isPlaced ? `Podium opened${tab ? ` on the ${tab.label} tab` : ''}.` : 'Podium is waiting for a wider terminal to place itself.' }
   })
 
   on('tool.call', async ($, e, next) => {
@@ -3130,7 +3172,7 @@ export const register: Register = on => {
   on('prompt.submit', async ($, e, next) => {
     if (!Runtime.isPlaced && !Runtime.view.isClosed && Flow.mayAutoOpen() && e.isMeta !== true && !Flow.isTaskNotification(e)) {
       try {
-        const opened = await $.ui.open({ id: PANE, title: 'Maestro', backgroundColor: Theme.BACKDROP, columns: 84 })
+        const opened = await $.ui.open({ id: PANE, title: 'Podium', backgroundColor: Theme.BACKDROP, columns: 84 })
         Runtime.isPlaced = opened.isPlaced
       } catch {
         Runtime.isPlaced = false
@@ -3195,7 +3237,7 @@ export const register: Register = on => {
       const { Box, Text } = $.ui.resolve(e)
       return (
         <Box flexDirection="column">
-          <Text bold>Maestro</Text>
+          <Text bold>Podium</Text>
           {data.agents.slice(-12).map(a => (
             <Text key={a.id}>
               {Theme.statusGlyph(a.status, 0)} {a.type} · {a.description}

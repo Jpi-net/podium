@@ -29,7 +29,7 @@ test('guesses the role of freely named project commands and ignores built-ins', 
     ProjectFixture.command('bugfix'),
     ProjectFixture.command('ship'),
     ProjectFixture.command('review', 'builtin'),
-    ProjectFixture.command('maestro', 'plugin'),
+    ProjectFixture.command('podium', 'plugin'),
   ]
 
   // Act
@@ -39,22 +39,22 @@ test('guesses the role of freely named project commands and ignores built-ins', 
   expect(roles.feature).toBe('feature-flow')
   expect(roles.fix).toBe('bugfix')
   expect(roles.deliver).toBe('ship')
-  expect(roles.setup).toBe('maestro')
+  expect(roles.setup).toBe('podium')
   expect(roles.review).toBe(undefined)
 })
 
-test('gives the setup role to maestro and maestro:setup only, never to the stage panel', () => {
+test('gives the setup role to podium and podium:setup only, never to the stage panel', () => {
   // Arrange
   const commands = [
-    ProjectFixture.command('maestro-stage', 'plugin'),
-    ProjectFixture.command('maestro:setup', 'plugin'),
+    ProjectFixture.command('podium-stage', 'plugin'),
+    ProjectFixture.command('podium:setup', 'plugin'),
   ]
 
   // Act
   const roles = Project.inferRoles(commands)
 
   // Assert
-  expect(roles.setup).toBe('maestro:setup')
+  expect(roles.setup).toBe('podium:setup')
   expect(roles.foundations).toBe(undefined)
 })
 
@@ -95,7 +95,7 @@ test('groups the commands into project, plugins, MCP and built-ins with roles fi
     ProjectFixture.command('zz-notes'),
     ProjectFixture.command('oops'),
     ProjectFixture.command('build-it'),
-    ProjectFixture.command('maestro-stage', 'plugin'),
+    ProjectFixture.command('podium-stage', 'plugin'),
     ProjectFixture.command('help', 'builtin'),
     ProjectFixture.command('jira:create', 'mcp'),
   ]
@@ -236,4 +236,31 @@ test('the default manifest maps npm run test:e2e to the e2e step', () => {
 
   // Assert
   expect(steps).toEqual(['e2e'])
+})
+
+test('a legacy setup role named maestro maps to podium', () => {
+  // Act
+  const manifest = Project.parse({ version: 1, name: 'demo', roles: { setup: 'maestro' } })
+
+  // Assert
+  expect(manifest?.roles.setup).toBe('podium')
+})
+
+test('a legacy setup role named maestro:setup maps to podium:setup', () => {
+  // Act
+  const manifest = Project.parse({ version: 1, name: 'demo', roles: { setup: 'maestro:setup' } })
+
+  // Assert
+  expect(manifest?.roles.setup).toBe('podium:setup')
+})
+
+test('recognises the legacy maestro commands as the setup command', () => {
+  // Arrange
+  const commands = [ProjectFixture.command('maestro:setup', 'plugin')]
+
+  // Act
+  const roles = Project.inferRoles(commands)
+
+  // Assert
+  expect(roles.setup).toBe('maestro:setup')
 })

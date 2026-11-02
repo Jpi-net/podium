@@ -11,7 +11,7 @@ export class Fixtures {
     },
     "versioned": false,
     "roles": {
-      "setup": "maestro",
+      "setup": "podium",
       "feature": "feat",
       "fix": "fix",
       "investigate": "investigate",

@@ -396,14 +396,14 @@ export class Rules {
   static review(answer: string): ReviewCount {
     const lines = answer.split(/\r?\n/)
     let findings: { level: number; text: string }[] = lines.flatMap(l => {
-      const tag = Rules.TAGGED_FINDING.exec(l) ?? Rules.BOLD_FINDING.exec(l)
+      const tag = l.match(Rules.TAGGED_FINDING) ?? l.match(Rules.BOLD_FINDING)
       const level = Rules.severityLevel(tag?.[1] ?? tag?.[2] ?? '')
       if (level < 0 || tag === null) return []
       return Rules.isNegationOnly(l.slice(tag.index + tag[0].length)) ? [] : [{ level, text: Rules.cleanFinding(l) }]
     })
     if (findings.length === 0) {
       findings = lines.flatMap(l => {
-        const m = Rules.LEADING_SEVERITY.exec(l)
+        const m = l.match(Rules.LEADING_SEVERITY)
         const level = Rules.severityLevel(m?.[1] ?? '')
         return level < 0 || m === null || Rules.isNegationOnly(l.slice(m.index + m[0].length)) ? [] : [{ level, text: Rules.cleanFinding(l) }]
       })
@@ -419,16 +419,16 @@ export class Rules {
   }
 
   static failureDetail(output: string): string {
-    const msbuild = Rules.MSBUILD_ERROR.exec(output)
+    const msbuild = output.match(Rules.MSBUILD_ERROR)
     if (msbuild !== null) return `error ${msbuild[3] ?? ''} · ${msbuild[1] ?? ''}:${msbuild[2] ?? ''}`
     const lines = output.split(/\r?\n/).filter(l => !Rules.PASS_LINE.test(l)).map(l => l.trim())
-    const coded = lines.map(l => Rules.ERROR_CODE.exec(l)?.[0]).find(l => l !== undefined)
+    const coded = lines.map(l => l.match(Rules.ERROR_CODE)?.[0]).find(l => l !== undefined)
     if (coded !== undefined) return coded.slice(0, 160)
     return (lines.find(l => Rules.FAILURE_LINE.test(l)) ?? '').slice(0, 160)
   }
 
   static severityTag(finding: string): { tag: string; text: string } {
-    const m = /^(Critical|Critique|Blocking|Bloquant|High|Major|Majeur|Medium|Moyen|Low|Minor|Mineur|Nit)\b[\s:]*/i.exec(finding)
+    const m = finding.match(/^(Critical|Critique|Blocking|Bloquant|High|Major|Majeur|Medium|Moyen|Low|Minor|Mineur|Nit)\b[\s:]*/i)
     if (m === null) return { tag: '', text: finding }
     const level = Rules.severityLevel(m[1] ?? '')
     return { tag: level === 0 ? 'C' : level === 1 ? 'M' : 'm', text: finding.slice(m[0].length) }
@@ -437,7 +437,7 @@ export class Rules {
   static workItem(branch: string): string {
     const pattern = Rules.snapshot.manifest.git.workItem
     try {
-      return new RegExp(pattern).exec(branch)?.[1] ?? ''
+      return branch.match(new RegExp(pattern))?.[1] ?? ''
     } catch {
       return ''
     }
@@ -451,11 +451,11 @@ export class Rules {
     let text = ''
     const headingIndex = lines.findIndex(l => Rules.VERDICT_HEADING.test(l))
     if (headingIndex >= 0) {
-      const inline = Rules.stripVerdictNoise(Rules.VERDICT_HEADING.exec(lines[headingIndex] ?? '')?.[1] ?? '')
+      const inline = Rules.stripVerdictNoise((lines[headingIndex] ?? '').match(Rules.VERDICT_HEADING)?.[1] ?? '')
       text = inline !== '' ? inline : Rules.stripVerdictNoise(lines.slice(headingIndex + 1).find(l => l.trim() !== '') ?? '')
     } else {
       for (const l of lines) {
-        const m = Rules.VERDICT_INLINE.exec(l)
+        const m = l.match(Rules.VERDICT_INLINE)
         if (m !== null) {
           text = Rules.stripVerdictNoise(m[1] ?? '')
           break
@@ -659,7 +659,7 @@ export class Rules {
     const roots = Rules.snapshot.manifest.code.roots
     if (roots !== '') {
       try {
-        const anchor = new RegExp(`(^|/)(${roots})`).exec(p)
+        const anchor = p.match(new RegExp(`(^|/)(${roots})`))
         if (anchor) return p.slice(anchor.index + (anchor[1]?.length ?? 0))
       } catch {
         return p

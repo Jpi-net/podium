@@ -78,10 +78,12 @@ export type CommandGroup = { id: string; label: string; commands: (CommandDef & 
 export type ProjectSnapshot = { manifest: Manifest; agents: AgentDef[]; commands: CommandDef[]; hasClaude: boolean; hasManifest: boolean; local: string[] }
 
 export class Project {
-  static readonly FILE = '.claude/maestro.json'
+  static readonly FILE = '.claude/podium.json'
+
+  static readonly LEGACY_FILE = '.claude/maestro.json'
 
   static readonly ROLE_LABELS: Record<RoleId, string> = {
-    setup: 'Maestro',
+    setup: 'Podium',
     kickoff: 'Kickoff',
     stack: 'Tech choices',
     foundations: 'Foundations',
@@ -97,7 +99,7 @@ export class Project {
     environment: 'Environment',
   }
 
-  static readonly SETUP_COMMAND = /^maestro(:setup)?$/
+  static readonly SETUP_COMMAND = /^(podium|maestro)(:setup)?$/
 
   static readonly ROLE_HINTS: readonly (readonly [RoleId, RegExp])[] = [
     ['kickoff', /^(kickoff|cadrage|brief|discover|idea|vision)/],
@@ -184,7 +186,7 @@ export class Project {
       stage: pick<Stage>('stage', v => v === 'none' || v === 'genesis' || v === 'full'),
       language: { ...base.language, ...(isObject(loose['language']) ? (loose['language'] as Manifest['language']) : {}) },
       versioned: pick<boolean>('versioned', v => typeof v === 'boolean'),
-      roles: pick<Manifest['roles']>('roles', isObject),
+      roles: Project.migrateRoles(pick<Manifest['roles']>('roles', isObject)),
       phases: pick<Phase[]>('phases', Array.isArray),
       reviewers: pick<Reviewer[]>('reviewers', Array.isArray),
       verification: pick<VerifRule[]>('verification', v => Array.isArray(v) && v.length > 0),
@@ -199,10 +201,17 @@ export class Project {
     }
   }
 
+  static migrateRoles(roles: Manifest['roles']): Manifest['roles'] {
+    const setup = roles.setup
+    if (setup === 'maestro') return { ...roles, setup: 'podium' }
+    if (setup === 'maestro:setup') return { ...roles, setup: 'podium:setup' }
+    return roles
+  }
+
   static agentFromMarkdown(fileName: string, text: string): AgentDef | undefined {
-    const front = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text)?.[1]
+    const front = text.match(/^---\r?\n([\s\S]*?)\r?\n---/)?.[1]
     if (front === undefined) return undefined
-    const field = (key: string): string => new RegExp(`^${key}:\\s*(.+)$`, 'm').exec(front)?.[1]?.trim().replace(/^["']|["']$/g, '') ?? ''
+    const field = (key: string): string => front.match(new RegExp(`^${key}:\\s*(.+)$`, 'm'))?.[1]?.trim().replace(/^["']|["']$/g, '') ?? ''
     const name = field('name') || fileName.replace(/\.md$/, '')
     const tools = field('tools')
       .split(',')
@@ -315,7 +324,7 @@ export class Project {
   private static matchLength(pattern: string, value: string): number {
     if (pattern === '') return 0
     try {
-      const m = new RegExp(pattern).exec(value)
+      const m = value.match(new RegExp(pattern))
       return m === null ? 0 : Math.max(1, m[0].length)
     } catch {
       return 0
