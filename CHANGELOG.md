@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Changed
+
+- The published plugin now contains only the plugin itself (plugin/): the repository's development setup, CI and project files are no longer shipped to users.
+
 ## [0.1.2] - 2026-11-02
 
 ### Changed
