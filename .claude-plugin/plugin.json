@@ -1,7 +1,7 @@
 {
   "name": "maestro",
   "displayName": "Maestro",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Conduct Claude Code like an orchestra: /maestro builds and maintains your project's .claude/ (CLAUDE.md, path-scoped rules, model-tiered agents, role skills, guard hooks), and /maestro-stage opens a live side panel of the flow, the verification, the reviews and the commands.",
   "author": {
     "name": "Julien Pierlot",
