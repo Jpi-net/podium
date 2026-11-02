@@ -35,7 +35,7 @@ Instantiate these files into the project's `.claude/` (and `CLAUDE.md`).
 | `{{ARTIFACT_LANGUAGE}}` | language of code, files, commits, logs (default English) |
 | `{{NON_NEGOTIABLE_RULES}}` | numbered list of the enabled rules, one line each, each pointing to its rule file |
 | `{{RULES_TABLE}}` | markdown table area → rule file |
-| `{{COMMANDS_CHEATSHEET}}` | full: fenced block with the verified build / test / lint commands and their folder. Genesis: the sentence "No build or test command yet: the foundations command records them in `docs/foundations.md`, and the next `/maestro` run copies them here." |
+| `{{COMMANDS_CHEATSHEET}}` | full: fenced block with the verified build / test / lint commands and their folder. Genesis: the sentence "No build or test command yet: the foundations command records them in `docs/foundations.md`, and the next `/podium` run copies them here." |
 | `{{ROLE_COMMANDS}}` | bullet list `/name args`: role, one line |
 | `{{BASE_BRANCH}}` | base branch, bare name (`main`); templates wrap it in backticks |
 | `{{PROTECTED_BRANCHES}}` | protected branches, already formatted: each name in backticks, comma separated (`` `main`, `release/*` ``); templates do NOT wrap it |

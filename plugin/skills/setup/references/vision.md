@@ -1,4 +1,4 @@
-# The vision: how a project set up by maestro works
+# The vision: how a project set up by podium works
 
 Every generated file must serve these principles. When a choice is unclear, pick the option that serves them best.
 
@@ -79,8 +79,8 @@ Aggregates, value objects, invariants and their tests before persistence, API an
 - Commit, branch and PR text is checked by a hook when the corresponding rules are enabled.
 - Edits are checked after the fact (comments, debug output left, focused tests, generated files).
 - The session start injects the branch, base, ahead/behind, merge state and any flow in progress.
-- Hooks read their configuration from `.claude/maestro.json`, so updating the manifest updates the behaviour.
+- Hooks read their configuration from `.claude/podium.json`, so updating the manifest updates the behaviour.
 
 ## 12. Names are free, roles are stable
 
-Commands can be named anything. The manifest maps each role (feature, fix, review…) to the command that fills it, so tools (the maestro panel, the hooks) work whatever the names.
+Commands can be named anything. The manifest maps each role (feature, fix, review…) to the command that fills it, so tools (the podium panel, the hooks) work whatever the names.

@@ -1,16 +1,16 @@
 ---
 name: setup
-description: Builds or adapts the project's .claude/ setup (CLAUDE.md, path-scoped rules, model-tiered agents, role skills, guard hooks, settings, maestro.json manifest) following an orchestrated AI-engineering workflow. Use when the user types /maestro or /maestro:setup, asks to set up or optimise Claude Code for a repository, to bootstrap the .claude folder of an empty project, or to update or audit an existing maestro setup.
+description: Builds or adapts the project's .claude/ setup (CLAUDE.md, path-scoped rules, model-tiered agents, role skills, guard hooks, settings, podium.json manifest) following an orchestrated AI-engineering workflow. Use when the user types /podium or /podium:setup, asks to set up or optimise Claude Code for a repository, to bootstrap the .claude folder of an empty project, or to update or audit an existing podium setup.
 argument-hint: "[new|existing|update|audit] [free context]"
 ---
 
-# /maestro: orchestrated .claude/ setup
+# /podium: orchestrated .claude/ setup
 
 You are the ORCHESTRATOR. You build the project's `.claude/` so that Claude Code can work on this repository the way the references describe: the main thread plans and delegates, model-tiered experts work in parallel on disjoint files, verification mirrors CI, reviews run in parallel, history is clean.
 
 This skill never creates the product itself (no application code, no scaffolding of the app, no CI files). It only writes `.claude/` (plus `CLAUDE.md` at the root when the user wants it there, and one line in `.git/info/exclude` when `.claude/` is not versioned). The project is then built with Claude Code through the commands this skill generates.
 
-The user runs this skill by typing `/maestro` (a command registered by the plugin that launches this skill, `maestro:setup`, with the same arguments). Every generated file and message refers to it as `/maestro`.
+The user runs this skill by typing `/podium` (a command registered by the plugin that launches this skill, `podium:setup`, with the same arguments). Every generated file and message refers to it as `/podium`.
 
 Arguments: `$ARGUMENTS`. First token may force the mode: `new` (genesis), `existing` (full), `update`, `audit` (report only, write nothing). Everything else is free context from the user.
 
@@ -21,11 +21,11 @@ Read these references when the step needs them, not all upfront:
 - `references/catalog.md`: agents, skills, hooks and rules you can generate, and when to include each.
 - `references/audit.md`: how to audit an existing repository.
 - `references/genesis.md`: the starter setup for an empty project.
-- `references/manifest.md`: the exact format of `.claude/maestro.json`.
+- `references/manifest.md`: the exact format of `.claude/podium.json`.
 - `references/merge.md`: how to write without destroying the user's work.
 - `templates/README.md`: the template files and their `{{placeholders}}`.
 
-The skill's own folder is `${CLAUDE_PLUGIN_ROOT}/skills/setup` when the variable is set; otherwise locate it with `find ~/.claude/plugins ~/.claude/mods -type d -path '*maestro*/skills/setup' 2>/dev/null | sort -V | tail -1` (on Windows without a POSIX shell: `Get-ChildItem -Recurse -Directory "$HOME/.claude/plugins" | Where-Object FullName -like '*maestro*skills*setup' | Select-Object -Last 1`). Read templates from there.
+The skill's own folder is `${CLAUDE_PLUGIN_ROOT}/skills/setup` when the variable is set; otherwise locate it with `find ~/.claude/plugins ~/.claude/mods -type d -path '*podium*/skills/setup' 2>/dev/null | sort -V | tail -1` (on Windows without a POSIX shell: `Get-ChildItem -Recurse -Directory "$HOME/.claude/plugins" | Where-Object FullName -like '*podium*skills*setup' | Select-Object -Last 1`). Read templates from there.
 
 Keep a checklist of the steps and report progress to the user with one short line per step.
 
@@ -34,12 +34,12 @@ Keep a checklist of the steps and report progress to the user with one short lin
 Run in parallel (read-only):
 - `git rev-parse --show-toplevel` (no git repository: tell the user that git must be configured and initialised first, offer `git init`, and continue only after it exists), `git log --oneline -5` (exit code 128 on a repository without commits is expected: it is a fresh repository), `git status --porcelain | head`.
 - List the top level and count source files outside `.claude/`, `.git/` and dependency or build output folders (`node_modules/`, `vendor/`, `dist/`, `build/`, `out/`, `target/`, `bin/`, `obj/`, `.venv/`, `venv/`, `__pycache__/`, `Pods/`, `.gradle/`, `DerivedData/`).
-- Check for `.claude/maestro.json`, `.claude/`, `CLAUDE.md`, `.claude/CLAUDE.md`.
+- Check for `.claude/podium.json`, the legacy `.claude/maestro.json`, `.claude/`, `CLAUDE.md`, `.claude/CLAUDE.md`.
 
 Decide:
 - **genesis**: no source code (only README, LICENSE, empty folders, maybe docs/ideas). Read `references/genesis.md`.
 - **full**: source code exists and there is no manifest. Read `references/audit.md`.
-- **update**: a manifest exists. If its `stage` is `genesis` and the stack is now chosen and code exists, propose the move to `full` (an audit, then the full setup that replaces the starter one). Otherwise audit what changed since `generatedFiles` was written (new layers, new commands, renamed commands, files the user edited) and propose updates.
+- **update**: a manifest exists. A project that has `.claude/maestro.json` and no `.claude/podium.json` comes from the former name: move the file to `.claude/podium.json` (keep every value; set `roles.setup` to `podium` when it is `maestro`), regenerate the hooks in the same run, and mention the migration in the final report. If its `stage` is `genesis` and the stack is now chosen and code exists, propose the move to `full` (an audit, then the full setup that replaces the starter one). Otherwise audit what changed since `generatedFiles` was written (new layers, new commands, renamed commands, files the user edited) and propose updates.
 - **audit**: run the audit of the detected mode and stop after the report.
 
 A forced mode in the arguments wins, but say so when it contradicts what you see (forcing genesis on a repository full of code, for example).
@@ -82,7 +82,7 @@ Ask for validation with AskUserQuestion: Validate / Adjust (specify) / Cancel. I
 2. Instantiate the templates (`templates/**`) following `templates/README.md`: fill every `{{PLACEHOLDER}}` from the audit and the validated proposal, in the artifact language; keep or drop each conditional block (markers on their own lines) and renumber lists. Leftover check: `grep -rnE '\{\{[#/]?[A-Z][A-Z_]*\}\}' .claude CLAUDE.md` prints nothing (double braces of Angular, Vue or Handlebars snippets quoted in rules are content, not placeholders).
 3. Specialise, do not copy: every agent and rule must name the real paths, commands, frameworks and conventions of this repository. Generic text that could apply to any project is a defect.
 4. Write the skills under `.claude/skills/<chosen-name>/SKILL.md` (the folder name is the command name).
-5. Write `.claude/maestro.json` (format: `references/manifest.md`): stage, language, versioned, roles (role → chosen command name), phases (agent groups for the panel, each with its `id`), reviewers, verification patterns from the real commands, layers, code roots, generated-file pattern, enabled checks, git conventions, `hooks` section (partitions of every implementer), and `generatedFiles` with the sha256 of every file you wrote except the manifest itself (`shasum -a 256` or `sha256sum`; on Windows `certutil -hashfile <file> SHA256` or PowerShell `(Get-FileHash <file>).Hash.ToLower()`).
+5. Write `.claude/podium.json` (format: `references/manifest.md`): stage, language, versioned, roles (role → chosen command name), phases (agent groups for the panel, each with its `id`), reviewers, verification patterns from the real commands, layers, code roots, generated-file pattern, enabled checks, git conventions, `hooks` section (partitions of every implementer), and `generatedFiles` with the sha256 of every file you wrote except the manifest itself (`shasum -a 256` or `sha256sum`; on Windows `certutil -hashfile <file> SHA256` or PowerShell `(Get-FileHash <file>).Hash.ToLower()`).
 6. Local only: append `.claude/` to `.git/info/exclude` if not already present. Versioned: write `.claude/.gitignore` from `templates/gitignore.tmpl` (flows, agent memory, local settings stay out of git).
 
 ## Step 5: Verify (fix and re-run until clean, at most 3 rounds)
@@ -105,8 +105,8 @@ Tell the user, in their language and briefly:
 - what was created, updated, kept, and what still needs their decision;
 - the commands now available with their role, in the order they will use them (genesis: kickoff → stack → foundations → feature; full: feature / fix / investigate…);
 - the suggested first commit of a versioned `.claude/` (for example `chore: add the .claude setup`): the hooks accept the folder name in commit messages;
-- to run `/reload-plugins` (or restart Claude Code) so new skills and hooks load, then to open `/maestro-stage`: its Tools tab (key 5) shows the project's commands by role and the next step, and its flow uses the manifest;
-- in genesis: the next step is the kickoff command, then `/maestro` again once the stack is chosen and code exists.
+- to run `/reload-plugins` (or restart Claude Code) so new skills and hooks load, then to open `/podium-stage`: its Tools tab (key 5) shows the project's commands by role and the next step, and its flow uses the manifest;
+- in genesis: the next step is the kickoff command, then `/podium` again once the stack is chosen and code exists.
 
 ## Rules
 

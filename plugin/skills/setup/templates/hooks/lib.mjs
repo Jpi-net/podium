@@ -25,10 +25,15 @@ export function projectDir() {
 
 export function manifest() {
     if (cachedManifest === undefined) {
-        try {
-            cachedManifest = JSON.parse(readFileSync(join(projectDir(), '.claude', 'maestro.json'), 'utf8'));
-        } catch {
-            cachedManifest = {};
+        cachedManifest = {};
+
+        for (const name of ['podium.json', 'maestro.json']) {
+            try {
+                cachedManifest = JSON.parse(readFileSync(join(projectDir(), '.claude', name), 'utf8'));
+                break;
+            } catch {
+                cachedManifest = {};
+            }
         }
     }
 
@@ -104,6 +109,14 @@ export const IS_WINDOWS = process.platform === 'win32';
 export function run(command, cwd, timeout = 10000) {
     try {
         return { ok: true, output: execFileSync(command, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout, shell: true, windowsHide: true }) };
+    } catch (error) {
+        return { ok: false, output: `${error.stdout ?? ''}${error.stderr ?? ''}`.trim() };
+    }
+}
+
+export function runFile(file, args, cwd, timeout = 10000) {
+    try {
+        return { ok: true, output: execFileSync(file, args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout, windowsHide: true }) };
     } catch (error) {
         return { ok: false, output: `${error.stdout ?? ''}${error.stderr ?? ''}`.trim() };
     }

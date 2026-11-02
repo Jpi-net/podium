@@ -29,7 +29,7 @@ Group the diffs by file, short, in one message. Ask once with AskUserQuestion: a
 
 ## The manifest itself
 
-`.claude/maestro.json` is never listed in `generatedFiles` (it cannot hold its own hash). On an update:
+`.claude/podium.json` is never listed in `generatedFiles` (it cannot hold its own hash). On an update:
 - keep every value the user changed by hand (a renamed command in `roles`, an added verification pattern, a partition, a check switched off) unless the validated proposal explicitly changes it;
 - add the new keys and the new roles, phases, reviewers, layers and partitions;
 - remove an entry only when the matching file was removed with the user's agreement;

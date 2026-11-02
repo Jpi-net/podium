@@ -12,7 +12,7 @@ The repository has no source code yet. You do not create the project. You create
 
 | File | From template | Notes |
 |---|---|---|
-| `CLAUDE.md` (location from the proposal) | `CLAUDE.md` | stage genesis (`IF_GENESIS`): no layer rules yet; the workflow section explains kickoff → stack → foundations → feature and that `/maestro` must run again once the stack is chosen; the cheat sheet uses the genesis sentence of `templates/README.md` |
+| `CLAUDE.md` (location from the proposal) | `CLAUDE.md` | stage genesis (`IF_GENESIS`): no layer rules yet; the workflow section explains kickoff → stack → foundations → feature and that `/podium` must run again once the stack is chosen; the cheat sheet uses the genesis sentence of `templates/README.md` |
 | `.claude/rules/git-workflow.md` | `rules/git-workflow.md` | conventions from the proposal, with the Bootstrap section |
 | `.claude/agents/product.md` | `agents/product.md` | runs the kickoff interview, writes `docs/product/brief.md` |
 | `.claude/agents/architect.md` | `agents/architect.md` | genesis variant: compares options, drafts ADRs, stack decision contract |
@@ -26,7 +26,7 @@ The repository has no source code yet. You do not create the project. You create
 | hooks | `hooks/*` | `lib`, `session-start`, `guard-bash`, `guard-git`, `guard-ownership`, `stop-check` (post-edit and user-prompt come with the full setup) |
 | `.claude/settings.json` | `settings.json.tmpl` | only the hooks above are wired; read-only git permissions; no `{{ALLOW_COMMANDS}}` line yet |
 | `.claude/.gitignore` | `gitignore.tmpl` | when `.claude/` is versioned |
-| `.claude/maestro.json` | manifest | see the genesis example of `references/manifest.md` |
+| `.claude/podium.json` | manifest | see the genesis example of `references/manifest.md` |
 
 Manifest essentials for genesis:
 - `stage: "genesis"`, roles `kickoff`, `stack`, `foundations`, `feature` (plus `setup`).
@@ -43,4 +43,4 @@ Manifest essentials for genesis:
 
 ## The handover to full
 
-The foundations command ends by telling the user to run `/maestro` again. On that run the manifest says `genesis` and code exists, so the skill audits the new code base and generates the full setup (layer experts, layer rules, verifier, delivery chain), keeping the starter commands that are still useful. `app-expert` is replaced by the layer experts (ask before deleting it).
+The foundations command ends by telling the user to run `/podium` again. On that run the manifest says `genesis` and code exists, so the skill audits the new code base and generates the full setup (layer experts, layer rules, verifier, delivery chain), keeping the starter commands that are still useful. `app-expert` is replaced by the layer experts (ask before deleting it).

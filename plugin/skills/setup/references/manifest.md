@@ -1,6 +1,6 @@
-# `.claude/maestro.json`
+# `.claude/podium.json`
 
-The manifest is the contract between this skill, the generated hooks and the maestro panel. The panel's source of truth is the `Manifest` type in the plugin's `hooks/project.ts`; this page mirrors it. The panel ignores keys it does not know, so the `hooks` section below (read only by the generated hooks) is safe.
+The manifest is the contract between this skill, the generated hooks and the podium panel. The panel's source of truth is the `Manifest` type in the plugin's `hooks/project.ts`; this page mirrors it. The panel ignores keys it does not know, so the `hooks` section below (read only by the generated hooks) is safe.
 
 All regex fields are JavaScript regular expression sources (no slashes, backslashes escaped for JSON) tested against paths relative to the repository root with `/` separators, or against command lines.
 
@@ -30,7 +30,7 @@ All regex fields are JavaScript regular expression sources (no slashes, backslas
 | `git.support` | regex | long-lived maintenance branches (`""` if none) |
 | `git.workItem` | regex | first capture group extracts the work item / issue id from a branch name |
 | `theme` | string | reserved for panel decoration themes; keep `""` (only the default theme exists today, any value falls back to it) |
-| `generatedFiles` | object | path → sha256 of each file as written by the last `/maestro` run; never contains the manifest itself |
+| `generatedFiles` | object | path → sha256 of each file as written by the last `/podium` run; never contains the manifest itself |
 
 ### `checks`
 
@@ -61,8 +61,8 @@ All regex fields are JavaScript regular expression sources (no slashes, backslas
 | `readOnlyAgents` | string[] | agents that may never edit files |
 | `safeRemove` | regex | paths a recursive delete may target |
 | `secrets` | regex | paths whose content must never be printed |
-| `workItemCommand` | string | command printing a JSON summary of a work item, `{id}` replaced (e.g. `gh issue view {id} --json number,title,state`) (`""` = none) |
-| `workItemMention` | regex | how users mention a work item in a prompt (first group = id) |
+| `workItemCommand` | string | command printing a JSON summary of a work item, `{id}` replaced (e.g. `gh issue view {id} --json number,title,state`) (`""` = none); runs through the shell with the validated id substituted for `{id}` |
+| `workItemMention` | regex | how users mention a work item in a prompt (first group = id); ids not matching `^\w[\w.-]{0,63}$` are ignored; summaries are cached for an hour in the repository's git dir (`podium-work-items`), no cache outside a git repo |
 | `blockModelNames` | boolean | with `checks.aiMention`, also refuse bare assistant and model names (claude, anthropic, chatgpt, copilot, llm, opus, sonnet, haiku) anywhere in git artifacts, branch names included; default `false`: they are refused only in an attribution phrase ("written with Opus", "Sonnet 4", "Generated with Claude Code") |
 
 ## Example: full stage
@@ -75,7 +75,7 @@ All regex fields are JavaScript regular expression sources (no slashes, backslas
   "language": { "conversation": "", "artifacts": "en" },
   "versioned": true,
   "roles": {
-    "setup": "maestro",
+    "setup": "podium",
     "feature": "feat",
     "fix": "fix",
     "investigate": "investigate",
@@ -161,7 +161,7 @@ Verification patterns match verification commands only. The panel already ignore
   "stage": "genesis",
   "language": { "conversation": "", "artifacts": "en" },
   "versioned": true,
-  "roles": { "setup": "maestro", "kickoff": "kickoff", "stack": "stack", "foundations": "foundations", "feature": "feat" },
+  "roles": { "setup": "podium", "kickoff": "kickoff", "stack": "stack", "foundations": "foundations", "feature": "feat" },
   "phases": [
     { "id": "plan", "name": "Plan", "short": "Plan", "agents": ["product", "architect", "Plan"] },
     { "id": "experts", "name": "Experts", "short": "Experts", "agents": ["app-expert", "devops"] },

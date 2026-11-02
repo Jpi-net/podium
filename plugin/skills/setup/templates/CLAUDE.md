@@ -29,7 +29,7 @@ This project is being created. Use the commands in this order:
 
 Implementers while the project is being created: `app-expert` (application code and tests), `devops` (delivery chain); `product` writes the brief, `architect` the decisions.
 
-Once the stack is chosen and the first code exists, run `/maestro` again: it audits the code base and generates the full setup (layer experts, layer rules, verification, delivery chain).
+Once the stack is chosen and the first code exists, run `/podium` again: it audits the code base and generates the full setup (layer experts, layer rules, verification, delivery chain).
 {{/IF_GENESIS}}
 {{#IF_FULL}}
 {{ROLE_COMMANDS}}

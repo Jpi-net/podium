@@ -21,7 +21,7 @@ Arguments: `$ARGUMENTS`: empty = all areas in order; otherwise one area.
 4. **CI/CD**: pipeline running exactly the local commands (install, build, format check, lint, tests), packaging, deployment per environment with an approval before production.
 5. **Versioning and release**: version source (tags or commit convention), changelog, release command or pipeline.
 6. **Environments**: local stack (one command), staging, production, configuration by environment variables, secrets by name only, rollback path.
-7. **Docs**: README (run, test, release), `docs/foundations.md` recording every convention chosen here and the exact build, format, lint and test commands (the next `/maestro` run reads them).
+7. **Docs**: README (run, test, release), `docs/foundations.md` recording every convention chosen here and the exact build, format, lint and test commands (the next `/podium` run reads them).
 
 For each area:
 1. Launch `architect` (and `devops` for 2, 4, 5, 6) for a concrete plan with files and commands.
@@ -30,7 +30,7 @@ For each area:
 4. Commit following `.claude/rules/git-workflow.md` when the user wants commits.
 
 ## End
-Tell the user: the foundations are in place; run `/maestro` again so the AI setup is regenerated for the real code base (layer experts, layer rules, verification, delivery chain), then use `/{{CMD_FEATURE}}` for the first features.
+Tell the user: the foundations are in place; run `/podium` again so the AI setup is regenerated for the real code base (layer experts, layer rules, verification, delivery chain), then use `/{{CMD_FEATURE}}` for the first features.
 
 ## Rules
 - Never run anything that touches shared infrastructure (deployments, remote settings, secret stores): give the user the exact steps.

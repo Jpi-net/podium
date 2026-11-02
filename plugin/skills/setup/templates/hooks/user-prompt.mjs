@@ -1,7 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { addContext, pattern, projectDir, readInput, run, setting } from './lib.mjs';
+import { addContext, pattern, git, projectDir, readInput, run, setting } from './lib.mjs';
 
 const CACHE_TTL_MS = 60 * 60 * 1000;
 
@@ -15,19 +14,40 @@ if (!commandTemplate || !mention || prompt.trim().startsWith('/')) {
     process.exit(0);
 }
 
-const ids = [...new Set([...prompt.matchAll(mention)].map(match => match[1]).filter(Boolean))].slice(0, 3);
+const ids = [...new Set([...prompt.matchAll(mention)].map(match => match[1]).filter(id => id && /^\w[\w.-]{0,63}$/.test(id)))].slice(0, 3);
 
 if (ids.length === 0) {
     process.exit(0);
 }
 
-const cacheDir = join(tmpdir(), `work-items-${Buffer.from(projectDir()).toString('base64url').slice(-24)}`);
+const gitDir = git(projectDir(), 'rev-parse', '--absolute-git-dir');
+const cacheDir = gitDir ? join(gitDir, 'podium-work-items') : '';
+
+function readCache(file) {
+    try {
+        if (existsSync(file) && Date.now() - statSync(file).mtimeMs < CACHE_TTL_MS) {
+            return readFileSync(file, 'utf8').slice(0, 400);
+        }
+    } catch {
+    }
+
+    return null;
+}
+
+function writeCache(file, text) {
+    try {
+        mkdirSync(cacheDir, { recursive: true });
+        writeFileSync(file, text);
+    } catch {
+    }
+}
 
 function summary(id) {
     const file = join(cacheDir, `${id}.txt`);
+    const cached = cacheDir ? readCache(file) : null;
 
-    if (existsSync(file) && Date.now() - statSync(file).mtimeMs < CACHE_TTL_MS) {
-        return readFileSync(file, 'utf8');
+    if (cached !== null) {
+        return cached;
     }
 
     const result = run(commandTemplate.replaceAll('{id}', id), projectDir(), 8000);
@@ -37,8 +57,10 @@ function summary(id) {
     }
 
     const text = result.output.trim().replace(/\s+/g, ' ').slice(0, 400);
-    mkdirSync(cacheDir, { recursive: true });
-    writeFileSync(file, text);
+
+    if (cacheDir) {
+        writeCache(file, text);
+    }
 
     return text;
 }

@@ -1,6 +1,6 @@
 ---
 name: app-expert
-description: Implements application code and its tests while the project is being created (before layer experts exist) - repository skeleton, first modules, example tests, exactly as the plan assigns them. Use during foundations and for features until /maestro generates the layer experts.
+description: Implements application code and its tests while the project is being created (before layer experts exist) - repository skeleton, first modules, example tests, exactly as the plan assigns them. Use during foundations and for features until /podium generates the layer experts.
 tools: Read, Grep, Glob, Edit, Write, Bash
 model: {{MODEL}}
 effort: medium

@@ -77,5 +77,5 @@ From `templates/settings.json.tmpl`: wiring of the generated hooks only, `attrib
 
 - `CLAUDE.md` (root or `.claude/CLAUDE.md`, follow the existing choice): `templates/CLAUDE.md`.
 - `.claude/review-learnings.md`: empty list header, filled by the reviews.
-- `.claude/maestro.json`: the manifest.
+- `.claude/podium.json`: the manifest.
 - `.claude/.gitignore` when `.claude/` is versioned: `templates/gitignore.tmpl`.
