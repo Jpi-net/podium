@@ -33,7 +33,7 @@ paths:
 3. Run `claude plugin validate plugin --profile directory --strict` and `claude plugin test plugin`.
 4. Commit `Release x.y.z`, tag `vx.y.z`, push `main` and the tag.
 5. `gh release create vx.y.z` with the changelog section as notes.
-6. Publish to the Anthropic plugin directory: `git push origin vx.y.z:release`. The directory follows the `release` branch (plugin path `plugin`): this push is what submits the new version to its validation, security scan and review. `main` never goes to the directory directly.
+6. Publish to the Anthropic plugin directory: `git push origin "vx.y.z^{commit}:refs/heads/release"`. The directory follows the `release` branch (plugin path `plugin`): this push is what submits the new version to its validation, security scan and review. `main` never goes to the directory directly.
 Never move a published tag; `release` only moves forward, to the latest release tag.
 
 ## Commands (from the repository root)
