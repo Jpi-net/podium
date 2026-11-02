@@ -2900,7 +2900,7 @@ export const register: Register = on => {
     await $.command.register({
       name: 'maestro-stage',
       description: 'Live side panel of the agents (tabs: flow, delivery, history, context, tools; reset to clear)',
-      argumentHint: '[flow|delivery|history|context|tools|recap|accessory [name|list]|notify on|notify off|reset|quad|half|auto|fps <10-60>]',
+      argumentHint: '[flow|delivery|history|context|tools|recap|accessory [name|list]|notify on|notify off|reset|disco|quad|half|auto|fps <10-60>]',
     })
     await $.command.register({
       name: 'maestro',
