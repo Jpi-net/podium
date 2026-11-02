@@ -33,11 +33,11 @@ if (setting('checks.aiMention', false)) {
     const scanned = [command, ...referencedFiles.map(path => readFileSync(path, 'utf8'))].join('\n');
 
     if (mentionsAssistant(scanned)) {
-        deny('Blocked: commit, branch or PR text mentions Claude, AI, an assistant, a model name, "Co-Authored-By" or "Generated with". Remove every such mention (see .claude/rules/git-workflow.md).');
+        deny('Blocked: this project opted out of AI attribution in git artifacts, and the commit, branch or PR text carries one (an AI "Co-Authored-By" trailer, "Generated with/by <assistant>", "AI-generated" or a model name). Remove it (see .claude/rules/git-workflow.md).');
     }
 }
 
-if (invokes(command, /^git\b.*(\s--no-verify\b|\bcommit\b.*\s-n\b)/)) {
+if (invokes(command, /^git\b.*(\s--no-verify\b|\bcommit\b.*\s-[a-zA-Z]*n[a-zA-Z]*\b)/)) {
     deny('Blocked: --no-verify is forbidden. Fix what the git hook reports instead.');
 }
 

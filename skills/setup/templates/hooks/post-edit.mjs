@@ -31,6 +31,7 @@ const SUSPICIOUS = [
     [/\b(it|describe|test)\.skip\(|\bx(it|describe)\(|\[(Fact|Theory)\s*\(\s*Skip\s*=|@Disabled\b|@pytest\.mark\.skip\b/, 'skipped test added'],
     [/\bconsole\.(log|debug)\(|\bdebugger;|^\s*print\(.*\bdebug\b|\bdbg!\(|\bfmt\.Println\("DEBUG/, 'debug output left'],
 ];
+const CODE_EXTENSIONS = new Set(['.cs', '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.vue', '.svelte', '.py', '.go', '.rs', '.java', '.kt', '.kts', '.scala', '.rb', '.php', '.swift', '.dart', '.c', '.cc', '.cpp', '.h', '.hpp', '.m', '.ex', '.exs']);
 const BOM = '﻿';
 
 const input = readInput();
@@ -106,7 +107,10 @@ if (setting('checks.noVar', false) && ['.cs', '.js', '.jsx', '.ts', '.tsx', '.mj
     }
 }
 
-for (const [regex, label] of SUSPICIOUS) {
+const ignored = pattern(setting('code.ignore', ''));
+const isCode = CODE_EXTENSIONS.has(extension) && !(ignored && ignored.test(relativePath));
+
+for (const [regex, label] of isCode ? SUSPICIOUS : []) {
     const hits = added.filter(line => regex.test(line));
 
     if (hits.length > 0) {

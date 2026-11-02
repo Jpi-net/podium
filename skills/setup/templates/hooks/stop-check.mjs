@@ -17,17 +17,17 @@ if (git(cwd, 'rev-parse', '--git-dir') === '' || isMidOperation(cwd)) {
     process.exit(0);
 }
 
-const changed = new Set([
-    ...git(cwd, 'diff', '--name-only', 'HEAD').split('\n'),
-    ...git(cwd, 'ls-files', '--others', '--exclude-standard', '--directory', '--no-empty-directory').split('\n'),
-].filter(Boolean));
+const tracked = git(cwd, 'diff', '--name-only', 'HEAD').split('\n').filter(Boolean);
+const untracked = git(cwd, 'ls-files', '--others', '--exclude-standard', '--directory', '--no-empty-directory').split('\n').filter(Boolean);
+const changed = new Set([...tracked, ...untracked]);
+const strays = new Set(untracked.filter(file => STRAY.test(file)));
 
 const problems = [];
 
 for (const file of changed) {
     const path = join(cwd, file);
 
-    if (STRAY.test(file)) {
+    if (strays.has(file)) {
         problems.push(`stray ${file.endsWith('/') ? 'folder' : 'file'} ${file} (delete it or add it to .gitignore)`);
         continue;
     }

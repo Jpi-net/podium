@@ -109,10 +109,20 @@ export function run(command, cwd, timeout = 10000) {
     }
 }
 
+function maskQuoted(quoted) {
+    const inner = quoted.slice(1, -1);
+
+    if (quoted.startsWith('"') && /\$\(|`/.test(inner)) {
+        return quoted;
+    }
+
+    return /[\s;|&<>`]/.test(inner) ? `${quoted[0]}?${quoted[0]}` : quoted;
+}
+
 export function segments(command) {
     return command
         .replace(/<<-?\s*(['"]?)(\w+)\1[^\n]*\n[\s\S]*?\n\s*\2\s*(?=\n|$)/g, '\n')
-        .replace(/'[^'\n]*'/g, '\'\'')
+        .replace(/"(?:[^"\\]|\\[\s\S])*"|'[^']*'/g, maskQuoted)
         .split(/&&|\|\||[;|\n]|\$\(|`/)
         .map(segment => segment.trim().replace(/^\(+/, '').replace(/^(\w+=\S*\s+)+/, '').replace(/^(sudo|time|command)\s+/, ''))
         .filter(Boolean);
@@ -122,9 +132,16 @@ export function invokes(command, regex) {
     return segments(command).some(segment => regex.test(segment));
 }
 
-export const FORBIDDEN_ATTRIBUTION = /\bclaude\b|\banthropic\b|co-authored-by|🤖|generated (with|by)\b|\bLLM\b|\bAI[- ](generated|assistant|written)\b|\bchatgpt\b|\bcopilot\b/i;
+const ASSISTANTS = String.raw`claude(?:\s+code)?|anthropic|chatgpt|openai|gpt-?\d|copilot|gemini|codeium|an?\s+(?:ai|llm)(?:\s+assistant)?|ai|llm`;
 
-const MODEL_NAMES = /\b(opus|sonnet|haiku)\b/i;
+export const FORBIDDEN_ATTRIBUTION = new RegExp([
+    String.raw`co-authored-by:[^\n]*\b(?:${ASSISTANTS}|assistant|noreply@anthropic\.com)\b`,
+    String.raw`\b(?:generated|written|authored|created|made|produced|assisted|drafted)\s+(?:with|by|using)\s+(?:\S+\s+){0,2}[\[(*_"'\`]*(?:${ASSISTANTS})\b`,
+    String.raw`\bAI[- ](?:generated|assisted|written)\b`,
+    '🤖',
+].join('|'), 'i');
+
+const ASSISTANT_NAMES = /\b(claude|anthropic|chatgpt|copilot|llm|opus|sonnet|haiku)\b/i;
 const MODEL_ATTRIBUTION = /\b(written|authored|created|made|produced|generated|assisted|drafted|co-?authored)\s+(with|by|using)\s+(\S+\s+){0,2}(opus|sonnet|haiku)\b|\b(opus|sonnet|haiku)[\s-]+\d/i;
 const TECHNICAL_TOKENS = /(?:[A-Za-z]:)?[\w.\\/~-]*?[\\/](?:claude-[\w-]+|\.claude)[\\/][^\s'")]*|(?:^|[\s(`'"])\.claude\b\/?|\$\{?(?:CLAUDE_PROJECT_DIR|CLAUDE_PLUGIN_ROOT|TMPDIR|TEMP|TMP)\}?|%(?:TEMP|TMP)%/g;
 
@@ -135,7 +152,7 @@ export function mentionsAssistant(text) {
         return true;
     }
 
-    return setting('hooks.blockModelNames', false) === true && MODEL_NAMES.test(cleaned);
+    return setting('hooks.blockModelNames', false) === true && ASSISTANT_NAMES.test(cleaned);
 }
 
 export const DEFAULT_READ_ONLY = ['architect', 'debugger', 'code-reviewer', 'security-reviewer', 'lint-runner', 'git-writer', 'Explore', 'Plan'];

@@ -37,7 +37,8 @@ for (const segment of executed) {
         deny('Blocked: never print secrets. Reference the variable by name or export it without displaying it.');
     }
 
-    const unixRemove = segment.match(/^rm\s+(-[a-zA-Z]*r[a-zA-Z]*|-[a-zA-Z]*f[a-zA-Z]*r[a-zA-Z]*)\s+(.+)$/)?.[2];
+    const unixArgs = segment.match(/^rm\s+(.+)$/)?.[1] ?? '';
+    const unixRemove = /(^|\s)(-[a-zA-Z]*[rR][a-zA-Z]*|--recursive)(\s|$)/.test(unixArgs) ? unixArgs : null;
     const windowsRemove = segment.match(/^(?:Remove-Item|ri|rd|rmdir)\s+(.+)$/i)?.[1];
     const recursiveWindowsRemove = windowsRemove && /(^|\s)(-Recurse|-r|\/s)\b/i.test(windowsRemove)
         ? windowsRemove.replace(/(^|\s)(-Recurse|-Force|-r|-fo|\/s|\/q)\b/gi, ' ')
@@ -45,7 +46,7 @@ for (const segment of executed) {
     const removed = unixRemove ?? recursiveWindowsRemove;
 
     if (removed) {
-        const targets = removed.trim().split(/\s+/).map(target => target.replace(/["']/g, '')).filter(target => target && !target.startsWith('-'));
+        const targets = removed.trim().split(/\s+/).map(target => target.replace(/["']/g, '').replace(/[\\/]\*$/, '')).filter(target => target && !target.startsWith('-'));
         const unsafe = targets.filter(target => !SAFE_REMOVE.test(target));
 
         if (unsafe.length > 0) {
