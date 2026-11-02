@@ -3069,12 +3069,12 @@ export const register: Register = on => {
   })
 
   on('command.run', { command: 'podium' }, async ($, e) => {
-    const args = e.args.trim()
-    const line = `/${Flow.SKILL}${args === '' ? '' : ` ${args}`}`
+    const extra = e.args.trim()
+    const line = `/${Flow.SKILL}${extra === '' ? '' : ` ${extra}`}`
     $.clock.after(50, () => {
-      void $.command.run({ command: Flow.SKILL, args }).catch(() => $.prompt.fill({ text: line }).catch(() => undefined))
+      void $.command.run({ command: Flow.SKILL, args: extra }).catch(() => $.prompt.fill({ text: line }).catch(() => undefined))
     })
-    return { text: `Podium${args === '' ? '' : ` (${args})`}: launching ${line}` }
+    return { text: `Podium${extra === '' ? '' : ` (${extra})`}: launching ${line}` }
   })
 
   on('command.run', { command: 'podium-stage' }, async ($, e) => {
