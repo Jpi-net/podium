@@ -1,4 +1,4 @@
-import { Canvas, type Rgb } from './canvas'
+import { Canvas, type Rgb, type Surface } from './canvas'
 
 export type Palette = Readonly<Record<string, Rgb>>
 
@@ -76,7 +76,7 @@ export class Raster {
     return c
   }
 
-  static paint(canvas: Canvas, sprite: Sprite, palette: Palette, cx: number, cy: number, scale = 1, alpha = 1, outlined = true): void {
+  static paint(canvas: Surface, sprite: Sprite, palette: Palette, cx: number, cy: number, scale = 1, alpha = 1, outlined = true): void {
     const x0 = -Math.floor(sprite.width / 2)
     const y0 = -Math.floor(sprite.height / 2)
     const r = new Raster(x0 - 1, y0 - 1, sprite.width + 2, sprite.height + 2)
@@ -175,7 +175,7 @@ export class Raster {
     for (const [x, y, c] of marks) this.dot(x, y, c)
   }
 
-  blit(canvas: Canvas, cx: number, cy: number, scale: number, tint: Tint = 'none', alpha = 1): void {
+  blit(canvas: Surface, cx: number, cy: number, scale: number, tint: Tint = 'none', alpha = 1): void {
     const f = Raster.factor(scale)
     const ox = Math.round(cx * 2) / 2
     const oy = Math.round(cy)

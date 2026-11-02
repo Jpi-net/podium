@@ -1,4 +1,5 @@
-import { Canvas, type Point, type Rgb } from './canvas'
+import { Canvas, type Point, type Rgb, type Surface } from './canvas'
+import { Lens } from './lens'
 import { Festive } from './festive'
 import { Hats } from './hats'
 import { Night } from './night'
@@ -177,7 +178,6 @@ export class Effects {
   private static readonly FLAG_RED: Rgb = [239, 51, 64]
   private static readonly VALENTINE_TINT: Rgb = [92, 22, 58]
   private static readonly NATIONAL_BURSTS: readonly Rgb[] = [[255, 244, 200], Effects.FLAG_YELLOW, Effects.FLAG_RED]
-  private static readonly ANCHORED: readonly string[] = ['glow', 'fillCircle', 'strokeCircle', 'fillEllipse', 'fillRect', 'block', 'fillRoundRect', 'strokeRoundRect', 'arc']
   private static readonly SNOW_LIGHT: Rgb = [226, 238, 252]
   private static readonly SNOW_SHADE: Rgb = [170, 192, 224]
   private static readonly SUNSET_TINT: Rgb = [255, 150, 90]
@@ -407,18 +407,10 @@ export class Effects {
     return { top: Canvas.mix(sky.top, Canvas.scale(c, 0.5), t), bottom: Canvas.mix(sky.bottom, c, t), halo: Canvas.mix(sky.halo, [255, 120, 170], t), stars: sky.stars }
   }
 
-  private static dimmed(canvas: Canvas, timeOfDay: TimeOfDay): Canvas {
+  private static dimmed(canvas: Surface, timeOfDay: TimeOfDay): Surface {
     const light = Effects.LIGHT[timeOfDay]
     if (light === undefined) return canvas
-    const tone = (c: Rgb): Rgb => Canvas.scale(timeOfDay === 'sunset' ? Canvas.mix(c, Effects.SUNSET_TINT, 0.15) : c, light)
-    const isRgb = (v: unknown): v is Rgb => Array.isArray(v) && v.length === 3 && v.every(n => typeof n === 'number')
-    return new Proxy(canvas, {
-      get: (obj, prop) => {
-        const member: unknown = Reflect.get(obj, prop, obj)
-        if (typeof member !== 'function') return member
-        return (...args: unknown[]): unknown => member.apply(obj, args.map(a => (isRgb(a) ? tone(a) : a)))
-      },
-    })
+    return Lens.toned(canvas, c => Canvas.scale(timeOfDay === 'sunset' ? Canvas.mix(c, Effects.SUNSET_TINT, 0.15) : c, light))
   }
 
   static light(timeOfDay: TimeOfDay): number {
@@ -429,7 +421,7 @@ export class Effects {
     return timeOfDay === 'evening' || timeOfDay === 'night'
   }
 
-  static outdoor(canvas: Canvas, frame: number, at: number, ambience: Ambience, obstacles: readonly Obstacle[], pane: Pane): void {
+  static outdoor(canvas: Surface, frame: number, at: number, ambience: Ambience, obstacles: readonly Obstacle[], pane: Pane): void {
     const sky = Effects.sky(ambience, frame)
     const holiday = ambience.holiday
     const view = Effects.view(canvas, pane)
@@ -446,7 +438,7 @@ export class Effects {
     Effects.celebrateOutdoor(view, at, frame, ambience)
   }
 
-  static sill(canvas: Canvas, frame: number, ambience: Ambience, pane: Pane, room: Room): void {
+  static sill(canvas: Surface, frame: number, ambience: Ambience, pane: Pane, room: Room): void {
     const isSnowy = ambience.holiday === 'christmas' || (ambience.holiday === 'none' && ambience.season === 'winter')
     if (!isSnowy) return
     const lit = Effects.dimmed(canvas, ambience.timeOfDay)
@@ -464,7 +456,7 @@ export class Effects {
     lit.block(left + glint * 0.5, y - 1, 0.5, 1, Effects.WHITE, 0.9)
   }
 
-  static indoor(canvas: Canvas, frame: number, at: number, ambience: Ambience, room: Room, pane: Pane): void {
+  static indoor(canvas: Surface, frame: number, at: number, ambience: Ambience, room: Room, pane: Pane): void {
     const lit = Effects.dimmed(canvas, ambience.timeOfDay)
     const holiday = ambience.holiday
     const isWinter = holiday === 'christmas' || (holiday === 'none' && ambience.season === 'winter')
@@ -495,7 +487,7 @@ export class Effects {
     if (ambience.isDebuggerActive) Festive.ladybug(canvas, frame, 1)
   }
 
-  static confetti(canvas: Canvas, frame: number, at: number, ambience: Ambience): void {
+  static confetti(canvas: Surface, frame: number, at: number, ambience: Ambience): void {
     switch (ambience.holiday) {
       case 'new-year':
         Effects.drift(canvas, frame, Effects.NEW_YEAR, 14, 0)
@@ -514,30 +506,10 @@ export class Effects {
     }
   }
 
-  private static view(canvas: Canvas, pane: Pane): Canvas {
+  private static view(canvas: Surface, pane: Pane): Surface {
     const ox = Math.round(pane.left * 2) / 2
     const oy = Math.round(pane.top)
-    const width = pane.right - ox
-    const height = pane.bottom - oy
-    const isPoint = (v: unknown): v is Point => typeof v === 'object' && v !== null && 'x' in v && 'y' in v
-    return new Proxy(canvas, {
-      get: (obj, prop) => {
-        if (prop === 'width') return width
-        if (prop === 'height') return height
-        const member: unknown = Reflect.get(obj, prop, obj)
-        if (typeof member !== 'function') return member
-        const isAnchored = typeof prop === 'string' && Effects.ANCHORED.includes(prop)
-        return (...args: unknown[]): unknown =>
-          member.apply(
-            obj,
-            args.map((a, k) => {
-              if (isAnchored && typeof a === 'number' && k < 2) return a + (k === 0 ? ox : oy)
-              if (!isAnchored && isPoint(a)) return { x: a.x + ox, y: a.y + oy }
-              return a
-            }),
-          )
-      },
-    })
+    return Lens.offset(canvas, ox, oy, pane.right - ox, pane.bottom - oy)
   }
 
   private static shifted(obstacles: readonly Obstacle[], pane: Pane): Obstacle[] {
@@ -612,7 +584,7 @@ export class Effects {
     Hats.sleeping(canvas, x, y, frame)
   }
 
-  static finale(canvas: Canvas, at: Point, t: number, status: ExitStatus, color: Rgb, frame: number, seed: number): void {
+  static finale(canvas: Surface, at: Point, t: number, status: ExitStatus, color: Rgb, frame: number, seed: number): void {
     const u = Math.max(0, Math.min(1, t))
     switch (status) {
       case 'done':
@@ -627,7 +599,7 @@ export class Effects {
     }
   }
 
-  static teleport(canvas: Canvas, from: Point, to: Point, t: number, color: Rgb, frame: number): void {
+  static teleport(canvas: Surface, from: Point, to: Point, t: number, color: Rgb, frame: number): void {
     const u = Math.max(0, Math.min(1, t))
     const env = Math.min(1, u * 5) * Math.min(1, (1 - u) * 4)
     if (env <= 0) return
@@ -655,7 +627,7 @@ export class Effects {
     canvas.glow(to.x, to.y, 4 + 2 * Math.sin(frame * 0.6), color, 0.35 * env)
   }
 
-  static celebrateOutdoor(canvas: Canvas, at: number, frame: number, ambience: Ambience): void {
+  static celebrateOutdoor(canvas: Surface, at: number, frame: number, ambience: Ambience): void {
     const center: Point = { x: canvas.width / 2, y: canvas.height }
     for (const c of ambience.celebrations) {
       const age = at - c.at
@@ -666,7 +638,7 @@ export class Effects {
     }
   }
 
-  private static celestial(canvas: Canvas, frame: number, ambience: Ambience, sky: Sky, obstacles: readonly Obstacle[]): void {
+  private static celestial(canvas: Surface, frame: number, ambience: Ambience, sky: Sky, obstacles: readonly Obstacle[]): void {
     const spot = Effects.spotIn(canvas, ambience, obstacles)
     if (Effects.isMoonUp(ambience)) {
       if (ambience.holiday === 'halloween') Night.harvestMoon(canvas, frame, spot)
@@ -684,13 +656,13 @@ export class Effects {
     return minute >= sun.civilDusk || minute < sun.civilDawn
   }
 
-  static celestialSpot(canvas: Canvas, ambience: Ambience, obstacles: readonly Obstacle[] = [], pane?: Pane): Spot {
+  static celestialSpot(canvas: Surface, ambience: Ambience, obstacles: readonly Obstacle[] = [], pane?: Pane): Spot {
     if (!pane) return Effects.spotIn(canvas, ambience, obstacles)
     const spot = Effects.spotIn(Effects.view(canvas, pane), ambience, Effects.shifted(obstacles, pane))
     return { ...spot, x: spot.x + Math.round(pane.left * 2) / 2, y: spot.y + Math.round(pane.top) }
   }
 
-  private static spotIn(canvas: Canvas, ambience: Ambience, obstacles: readonly Obstacle[]): Spot {
+  private static spotIn(canvas: Surface, ambience: Ambience, obstacles: readonly Obstacle[]): Spot {
     const w = canvas.width
     const m = Math.min(w, canvas.height)
     if (Effects.isMoonUp(ambience)) {
@@ -715,7 +687,7 @@ export class Effects {
     return Effects.slideDisc(canvas, r, 1.7, 0, 1, on, p0, obstacles, p => Math.sin(Math.PI * p))
   }
 
-  private static slideDisc(canvas: Canvas, r: number, reach: number, lo: number, hi: number, at: (t: number) => Point, t0: number, obstacles: readonly Obstacle[], lift: (t: number) => number = () => 0): Spot {
+  private static slideDisc(canvas: Surface, r: number, reach: number, lo: number, hi: number, at: (t: number) => Point, t0: number, obstacles: readonly Obstacle[], lift: (t: number) => number = () => 0): Spot {
     const free = (t: number): boolean => Effects.isClear(at(t), r * reach, obstacles)
     const step = (hi - lo) / 120
     let found: number | undefined = free(t0) ? t0 : undefined
@@ -742,7 +714,7 @@ export class Effects {
     })
   }
 
-  private static seasonOutdoor(target: Canvas, frame: number, ambience: Ambience): void {
+  private static seasonOutdoor(target: Surface, frame: number, ambience: Ambience): void {
     const canvas = Effects.dimmed(target, ambience.timeOfDay)
     switch (ambience.season) {
       case 'winter':
@@ -764,11 +736,11 @@ export class Effects {
     }
   }
 
-  private static density(canvas: Canvas, count: number): number {
+  private static density(canvas: Surface, count: number): number {
     return Math.max(4, Math.round((count * canvas.width * canvas.height) / 1500))
   }
 
-  private static holidayOutdoor(canvas: Canvas, frame: number, holiday: Holiday, timeOfDay: TimeOfDay): void {
+  private static holidayOutdoor(canvas: Surface, frame: number, holiday: Holiday, timeOfDay: TimeOfDay): void {
     switch (holiday) {
       case 'none':
       case 'may-day':
@@ -818,15 +790,15 @@ export class Effects {
     }
   }
 
-  static clouds(canvas: Canvas, frame: number, ambience: Ambience): void {
+  static clouds(canvas: Surface, frame: number, ambience: Ambience): void {
     Night.clouds(canvas, frame, ambience)
   }
 
-  static comet(canvas: Canvas, frame: number, stars: number): void {
+  static comet(canvas: Surface, frame: number, stars: number): void {
     Night.comet(canvas, frame, stars)
   }
 
-  private static twinkles(canvas: Canvas, frame: number, stars: number): void {
+  private static twinkles(canvas: Surface, frame: number, stars: number): void {
     const count = Math.max(8, Math.min(26, Math.round((26 * canvas.width * canvas.height) / 2400)))
     for (let i = 0; i < count; i++) {
       const sway = frame * (0.006 + Canvas.hash(i, 43) * 0.006) + i * 1.7
@@ -839,7 +811,7 @@ export class Effects {
     }
   }
 
-  private static aurora(canvas: Canvas, frame: number): void {
+  private static aurora(canvas: Surface, frame: number): void {
     const n = 14
     for (let i = 0; i < n; i++) {
       const s = i / (n - 1)
@@ -852,7 +824,7 @@ export class Effects {
     }
   }
 
-  private static shootingStar(canvas: Canvas, frame: number, stars: number): void {
+  private static shootingStar(canvas: Surface, frame: number, stars: number): void {
     const window = Math.floor(frame / Effects.SHOOTING_PERIOD)
     if (Canvas.hash(window, 7) <= 0.6) return
     const local = frame - window * Effects.SHOOTING_PERIOD
@@ -881,7 +853,7 @@ export class Effects {
     canvas.fillCircle(hx, hy, 0.45, Effects.WHITE, fade)
   }
 
-  private static discoSpots(canvas: Canvas, frame: number, room: Room): void {
+  private static discoSpots(canvas: Surface, frame: number, room: Room): void {
     const w = canvas.width
     const wall = Math.max(2, room.floorY - room.sillY)
     for (let i = 0; i < 6; i++) {
@@ -899,7 +871,7 @@ export class Effects {
     }
   }
 
-  private static fireworks(canvas: Canvas, center: Point, s: number, seed: number): void {
+  private static fireworks(canvas: Surface, center: Point, s: number, seed: number): void {
     for (let i = 0; i < 3; i++) {
       const launch = i * 0.65
       const ts = s - launch
@@ -946,7 +918,7 @@ export class Effects {
     }
   }
 
-  private static finaleDone(canvas: Canvas, at: Point, t: number, color: Rgb, frame: number, seed: number): void {
+  private static finaleDone(canvas: Surface, at: Point, t: number, color: Rgb, frame: number, seed: number): void {
     const fade = 1 - t
     const r = 3 + t * 10
     const n = 12
@@ -984,7 +956,7 @@ export class Effects {
     Festive.sparkle(canvas, d.x + 0.4, d.y - 0.4, 1.2 * ck, Effects.WHITE, ca)
   }
 
-  private static finaleFailed(canvas: Canvas, at: Point, t: number, seed: number): void {
+  private static finaleFailed(canvas: Surface, at: Point, t: number, seed: number): void {
     const fade = 1 - t
     if (t < 0.3) canvas.glow(at.x, at.y, 9, Effects.KO, 0.55 * (1 - t / 0.3))
     const r = 3 + t * 11
@@ -993,7 +965,7 @@ export class Effects {
     Effects.smoke(canvas, at, t, seed, Effects.SMOKE, 6)
   }
 
-  private static smoke(canvas: Canvas, at: Point, t: number, seed: number, c: Rgb, n: number): void {
+  private static smoke(canvas: Surface, at: Point, t: number, seed: number, c: Rgb, n: number): void {
     for (let i = 0; i < n; i++) {
       const delay = i * 0.08
       const p = (t - delay) / (1 - delay)
@@ -1007,7 +979,7 @@ export class Effects {
     }
   }
 
-  private static dustPuff(canvas: Canvas, at: Point, t: number, seed: number): void {
+  private static dustPuff(canvas: Surface, at: Point, t: number, seed: number): void {
     const fade = Math.sin(Math.PI * Math.min(1, t * 1.05))
     for (let i = 0; i < 12; i++) {
       const side = i % 2 === 0 ? -1 : 1
@@ -1021,7 +993,7 @@ export class Effects {
     canvas.fillEllipse(at.x, at.y + 5, 3 + t * 7, 1.1 + t * 0.6, Effects.DUST, 0.4 * fade)
   }
 
-  private static column(canvas: Canvas, at: Point, color: Rgb, strength: number, frame: number): void {
+  private static column(canvas: Surface, at: Point, color: Rgb, strength: number, frame: number): void {
     if (strength <= 0.01) return
     const h = 18
     const bright = Canvas.mix(color, Effects.WHITE, 0.6)
@@ -1042,7 +1014,7 @@ export class Effects {
     }
   }
 
-  private static drift(canvas: Canvas, frame: number, palette: readonly Rgb[], count: number, salt: number): void {
+  private static drift(canvas: Surface, frame: number, palette: readonly Rgb[], count: number, salt: number): void {
     for (let n = 0; n < count; n++) {
       const i = n + salt
       const h = canvas.height + 6
@@ -1058,7 +1030,7 @@ export class Effects {
     }
   }
 
-  private static frost(canvas: Canvas, frame: number, pane: Pane): void {
+  private static frost(canvas: Surface, frame: number, pane: Pane): void {
     const left = Math.round(pane.left * 2) / 2
     const right = Math.round(pane.right * 2) / 2
     const top = Math.round(pane.top)
@@ -1091,12 +1063,12 @@ export class Effects {
     })
   }
 
-  private static haze(canvas: Canvas, frame: number): void {
+  private static haze(canvas: Surface, frame: number): void {
     const breathe = 0.85 + 0.15 * Math.sin(frame * 0.03)
     for (let x = 0; x <= canvas.width; x += 14) canvas.glow(x, canvas.height + 4, 20, [255, 156, 64], 0.2 * breathe)
   }
 
-  private static glitter(canvas: Canvas, frame: number, c: Rgb, count: number, salt: number): void {
+  private static glitter(canvas: Surface, frame: number, c: Rgb, count: number, salt: number): void {
     for (let i = 0; i < count; i++) {
       const x = 4 + Canvas.hash(i, salt) * (canvas.width - 8)
       const y = 3 + Canvas.hash(i, salt + 1) * canvas.height * 0.55
@@ -1105,7 +1077,7 @@ export class Effects {
     }
   }
 
-  private static bursts(canvas: Canvas, frame: number, colors: readonly Rgb[], salt: number, period: number): void {
+  private static bursts(canvas: Surface, frame: number, colors: readonly Rgb[], salt: number, period: number): void {
     const life = 66
     const rise = 14
     const index = Math.floor(frame / period)
@@ -1159,7 +1131,7 @@ export class Effects {
     }
   }
 
-  private static bells(canvas: Canvas, frame: number): void {
+  private static bells(canvas: Surface, frame: number): void {
     for (let i = 0; i < 2; i++) {
       const p = Night.bellAt(canvas, frame, i)
       const period = 90
@@ -1173,7 +1145,7 @@ export class Effects {
     }
   }
 
-  private static warp(canvas: Canvas, frame: number): void {
+  private static warp(canvas: Surface, frame: number): void {
     const cx = canvas.width / 2
     const cy = canvas.height * 0.45
     for (let i = 0; i < 34; i++) {

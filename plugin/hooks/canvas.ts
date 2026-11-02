@@ -47,6 +47,11 @@ class Base64 {
 
 export type ClipRect = { left: number; right: number; top: number; bottom: number }
 
+export type Surface = Pick<
+  Canvas,
+  'width' | 'height' | 'clip' | 'paint' | 'glow' | 'fillCircle' | 'strokeCircle' | 'fillEllipse' | 'fillRect' | 'block' | 'fillRoundRect' | 'strokeRoundRect' | 'fillTriangle' | 'line' | 'arc' | 'curve' | 'text'
+>
+
 export class Canvas {
   static readonly HD_CELL_WIDTH = 6
   static readonly HD_CELL_HEIGHT = 12

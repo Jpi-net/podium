@@ -1,4 +1,4 @@
-import { Canvas, type Point, type Rgb } from './canvas'
+import { Canvas, type Point, type Rgb, type Surface } from './canvas'
 import type { Ambience, Spot, TimeOfDay } from './effects'
 import { Raster, Sprite, type Palette } from './sprite'
 
@@ -144,7 +144,7 @@ export class Night {
     '...CCCCCCCCCCCCCC...',
   ])
 
-  static clouds(canvas: Canvas, frame: number, ambience: Ambience): void {
+  static clouds(canvas: Surface, frame: number, ambience: Ambience): void {
     if (ambience.timeOfDay === 'evening' || ambience.timeOfDay === 'night') return
     const light = Night.LIGHT[ambience.timeOfDay] ?? 1
     const warm = ambience.timeOfDay === 'dawn' || ambience.timeOfDay === 'sunset' ? 0.45 : ambience.timeOfDay === 'afternoon' ? 0.15 : 0
@@ -163,7 +163,7 @@ export class Night {
     })
   }
 
-  static comet(canvas: Canvas, frame: number, stars: number): void {
+  static comet(canvas: Surface, frame: number, stars: number): void {
     const window = Math.floor(frame / Night.COMET_PERIOD)
     if (Canvas.hash(window, 61) <= 1 - Night.COMET_CHANCE) return
     const local = frame - window * Night.COMET_PERIOD
@@ -191,7 +191,7 @@ export class Night {
     Night.sparkle(canvas, hx, hy, 1.6, [200, 236, 255], fade)
   }
 
-  static harvestMoon(canvas: Canvas, frame: number, spot: Spot): void {
+  static harvestMoon(canvas: Surface, frame: number, spot: Spot): void {
     const { x: cx, y: cy, r } = spot
     canvas.glow(cx, cy, r * 3, [255, 150, 60], 0.14 + 0.02 * Math.sin(frame * 0.05))
     canvas.glow(cx, cy, r * 1.7, Night.MOON, 0.25)
@@ -206,7 +206,7 @@ export class Night {
     ras.blit(canvas, cx, cy, 1)
   }
 
-  static paleMoon(canvas: Canvas, carve: Rgb, spot: Spot): void {
+  static paleMoon(canvas: Surface, carve: Rgb, spot: Spot): void {
     const { x: cx, y: cy, r } = spot
     const ras = Night.disc(r)
     const rx = r * 2
@@ -230,7 +230,7 @@ export class Night {
     canvas.glow(cx, cy, r * 3.2, Night.MOON_PALE, 0.12)
   }
 
-  static sun(canvas: Canvas, frame: number, spot: Spot, isSummer: boolean, alpha: number): void {
+  static sun(canvas: Surface, frame: number, spot: Spot, isSummer: boolean, alpha: number): void {
     const { x, y, r, lift } = spot
     const core = Canvas.mix(Night.SUN, Night.SUN_LOW, Math.pow(1 - lift, 1.5))
     const boost = isSummer ? 1.7 : 1
@@ -247,7 +247,7 @@ export class Night {
     ras.blit(canvas, x, y, 1, 'none', alpha)
   }
 
-  static bats(canvas: Canvas, frame: number): void {
+  static bats(canvas: Surface, frame: number): void {
     for (let i = 0; i < 3; i++) {
       const speed = 0.22 + i * 0.07
       const span = canvas.width + 16
@@ -257,7 +257,7 @@ export class Night {
     }
   }
 
-  static bat(canvas: Canvas, x: number, y: number, k: number, frame: number): void {
+  static bat(canvas: Surface, x: number, y: number, k: number, frame: number): void {
     const flap = Math.sin(frame * 0.9)
     const sprite = flap > 0.35 ? Night.BAT_FRAMES[0] : flap < -0.35 ? Night.BAT_FRAMES[2] : Night.BAT_FRAMES[1]
     if (!sprite) return
@@ -265,7 +265,7 @@ export class Night {
     Raster.paint(canvas, sprite, { B: Night.BAT, b: Night.BAT_RIM, E: Night.BAT_EYE }, x, y, 1, 1, true)
   }
 
-  static snow(canvas: Canvas, frame: number, count: number, salt: number, size: number): void {
+  static snow(canvas: Surface, frame: number, count: number, salt: number, size: number): void {
     const h = canvas.height + 6
     for (let i = 0; i < count; i++) {
       const id = i + salt
@@ -287,7 +287,7 @@ export class Night {
     }
   }
 
-  static speculoos(canvas: Canvas, frame: number): void {
+  static speculoos(canvas: Surface, frame: number): void {
     const h = canvas.height + 8
     const dough: Rgb = [150, 92, 44]
     const edge: Rgb = [100, 58, 26]
@@ -311,14 +311,14 @@ export class Night {
     }
   }
 
-  static bellAt(canvas: Canvas, frame: number, i: number): Point {
+  static bellAt(canvas: Surface, frame: number, i: number): Point {
     const span = canvas.width + 24
     const x = canvas.width + 12 - ((frame * 0.15 + i * span * 0.5) % span)
     const y = canvas.height * (0.16 + i * 0.16) + Math.sin(frame * 0.05 + i * 2) * 2.5
     return { x, y }
   }
 
-  static bell(canvas: Canvas, x: number, y: number, s: number, swing: number, frame: number): void {
+  static bell(canvas: Surface, x: number, y: number, s: number, swing: number, frame: number): void {
     const flap = Math.sin(frame * 0.45)
     const sprite = Night.BELL_FRAMES[flap > 0 ? 0 : 1]
     if (!sprite) return
@@ -351,7 +351,7 @@ export class Night {
     ras.blit(canvas, x, y, 1)
   }
 
-  static guidingStar(canvas: Canvas, frame: number): void {
+  static guidingStar(canvas: Surface, frame: number): void {
     const x = canvas.width * 0.8 + Math.sin(frame * 0.02) * 1.5
     const y = canvas.height * 0.14 + Math.cos(frame * 0.025) * 0.8
     const tail: Point = { x: -24, y: 10 }
@@ -372,7 +372,7 @@ export class Night {
     Raster.paint(canvas, sprite, { Y: Canvas.mix(Night.GOLD, Night.WHITE, 0.35), G: Night.GOLD, W: Night.WHITE, X: Canvas.mix(Night.WHITE, Night.GOLD, 0.3) }, x, y, 1, 1, true)
   }
 
-  static walkingCat(canvas: Canvas, frame: number, baseline: number = canvas.height, left = 0, right: number = canvas.width): void {
+  static walkingCat(canvas: Surface, frame: number, baseline: number = canvas.height, left = 0, right: number = canvas.width): void {
     const s = 1.25
     const lo = left + 5
     const span = Math.max(1, right - 5 - lo)
@@ -404,7 +404,7 @@ export class Night {
     ras.blit(canvas, x, y, 1, 'none', fade)
   }
 
-  static brokenMirror(canvas: Canvas, frame: number, at?: Point, scale = 1): void {
+  static brokenMirror(canvas: Surface, frame: number, at?: Point, scale = 1): void {
     const cx = at?.x ?? canvas.width * 0.88
     const cy = at?.y ?? canvas.height * 0.2
     const rx = 3.2
@@ -435,7 +435,7 @@ export class Night {
     })
   }
 
-  static mirrorBall(canvas: Canvas, frame: number): void {
+  static mirrorBall(canvas: Surface, frame: number): void {
     const cx = canvas.width / 2
     const r = Math.max(3, Math.min(4.5, canvas.height * 0.07))
     const cy = r + 1.5
@@ -476,7 +476,7 @@ export class Night {
     }
   }
 
-  static rocket(canvas: Canvas, center: Point, s: number, seed: number, frame: number): void {
+  static rocket(canvas: Surface, center: Point, s: number, seed: number, frame: number): void {
     const target: Point = { x: canvas.width - 8 - Canvas.hash(seed, 3) * 6, y: 5 + Canvas.hash(seed, 4) * 4 }
     const flight = 2.2
     const path = (q: number): Point => {
@@ -515,7 +515,7 @@ export class Night {
     Night.sparkle(canvas, target.x, target.y, 2.2 * fade + 0.6, Night.WARN, fade)
   }
 
-  static rocketShip(canvas: Canvas, p: Point, angle: number, frame: number): void {
+  static rocketShip(canvas: Surface, p: Point, angle: number, frame: number): void {
     const flick = 0.75 + 0.25 * Canvas.hash(Math.floor(frame), 17)
     const cos = Math.cos(angle)
     const sin = Math.sin(angle)
@@ -539,14 +539,14 @@ export class Night {
     canvas.glow(p.x - cos * 2.7, p.y - sin * 2.7, 1.4, Night.CANDLE, 0.6 * flick)
   }
 
-  private static sparkle(canvas: Canvas, x: number, y: number, r: number, c: Rgb, alpha: number): void {
+  private static sparkle(canvas: Surface, x: number, y: number, r: number, c: Rgb, alpha: number): void {
     if (alpha <= 0.01 || r <= 0) return
     canvas.glow(x, y, r * 1.6, c, 0.45 * alpha)
     const sprite = Night.SPARKLES[r < 0.7 ? 0 : r < 1.3 ? 1 : r < 2.2 ? 2 : 3]
     if (sprite) Raster.paint(canvas, sprite, { X: Canvas.mix(c, Night.WHITE, 0.5), W: Night.WHITE }, x, y, 1, Math.min(1, alpha), false)
   }
 
-  private static cloud(canvas: Canvas, x: number, y: number, k: number, c: Rgb, alpha: number): void {
+  private static cloud(canvas: Surface, x: number, y: number, k: number, c: Rgb, alpha: number): void {
     const w = Math.ceil(4 * k) + 2
     const h = Math.ceil(2.2 * k) + 2
     const ras = new Raster(-w * 2, -h, w * 4, h * 2)
