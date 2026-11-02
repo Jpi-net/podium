@@ -18,9 +18,11 @@ jobs:
           node-version: 22
       - name: Install Claude Code
         run: npm install -g @anthropic-ai/claude-code
-      - name: Validate the plugin
+      - name: Validate the marketplace
         run: claude plugin validate .
+      - name: Validate the plugin
+        run: claude plugin validate plugin
       - name: Run the tests
-        run: claude plugin test .
+        run: claude plugin test plugin
       - name: Check the hook templates
-        run: for f in skills/setup/templates/hooks/*.mjs; do node --check "$f"; done
+        run: for f in plugin/skills/setup/templates/hooks/*.mjs; do node --check "$f"; done
