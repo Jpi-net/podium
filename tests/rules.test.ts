@@ -422,3 +422,107 @@ test('a GitHub or GitLab PR is recognised as a delivery', () => {
   // Assert
   expect(['gh pr create --draft', 'glab mr create', 'az repos pr create --draft true'].map(c => Rules.isDelivery(c))).toEqual([true, true, true])
 })
+
+class AiFixture {
+  static readonly CONTEXT = { branch: 'bugfixes/1-x', isNewFile: false, functionCandidates: [] }
+  static readonly PASSING_OUTPUT = [
+    '(pass) resolveBackground: the output file tail with Build FAILED turns the task red',
+    '(pass) 0 failed is not a failure and 2 failed is one',
+    ' 355 pass',
+    ' 0 fail',
+  ].join('\n')
+
+  static commandHits(command: string): number {
+    return Rules.inspectCommand(command, NO_CONTEXT).filter(h => h.rule === 'ai-mention').length
+  }
+
+  static editHits(line: string): number {
+    return Rules.inspectEdit('hooks/a.ts', [line], AiFixture.CONTEXT).filter(h => h.rule === 'ai-mention').length
+  }
+}
+
+test('a passing run whose test titles quote Build FAILED and 2 failed is not a failure', async () => {
+  // Act
+  const isFailure = Rules.isFailure(AiFixture.PASSING_OUTPUT, false)
+
+  // Assert
+  expect(isFailure).toBe(false)
+})
+
+test('the failure detail never returns a passing test line', async () => {
+  // Act
+  const detail = Rules.failureDetail(AiFixture.PASSING_OUTPUT)
+
+  // Assert
+  expect(detail.startsWith('(pass)')).toBe(false)
+})
+
+test('chained plugin commands and a branch listing raise no AI mention', async () => {
+  // Assert
+  expect(AiFixture.commandHits('claude plugin validate . && claude plugin test . && git commit -m "Fix panel"')).toBe(0)
+  expect(AiFixture.commandHits('git branch -a | grep claude')).toBe(0)
+})
+
+test('a commit message that names an LLM client raises no AI mention', async () => {
+  // Assert
+  expect(AiFixture.commandHits('git commit -m "Add an LLM client"')).toBe(0)
+})
+
+test('an import from the claude-code package raises no AI mention', async () => {
+  // Assert
+  expect(AiFixture.editHits("import type { Register } from 'claude-code'")).toBe(0)
+})
+
+test('a Co-Authored-By trailer or a Generated with line in a commit still raises an AI mention', async () => {
+  // Assert
+  expect(AiFixture.commandHits('git commit -m "Add x" -m "Co-Authored-By: Claude <noreply@anthropic.com>"')).toBe(1)
+  expect(AiFixture.commandHits('git commit -m "Generated with Claude Code"')).toBe(1)
+})
+
+test('a real failure next to a clean summary is still a failure', async () => {
+  // Arrange
+  const outputs = [
+    'Tests: 0 failed, 10 passed\nBuild FAILED.',
+    '(pass) x\nerror TS2322: Type \'string\' is not assignable to type \'number\'.\n 0 fail',
+    '3 passed, 0 failed\nTraceback (most recent call last):',
+    '0 failed\nSyntaxError: x',
+    'error[E0308]: mismatched types\n0 failures',
+  ]
+
+  // Act
+  const results = outputs.map(o => Rules.isFailure(o, false))
+
+  // Assert
+  expect(results).toEqual([true, true, true, true, true])
+})
+
+test('a Bun run with passes and failures is a failure', async () => {
+  // Act
+  const isFailure = Rules.isFailure(' 2 pass\n 3 fail', false)
+
+  // Assert
+  expect(isFailure).toBe(true)
+})
+
+test('an AI attribution inside a heredoc commit is caught', async () => {
+  // Arrange
+  const file = ['git commit -F - <<\'EOF\'', 'Add x', '', 'Co-Authored-By: Claude <noreply@anthropic.com>', 'EOF'].join('\n')
+  const subst = ['git commit -m "$(cat <<\'EOF\'', 'Add x', '', 'Co-Authored-By: Claude <noreply@anthropic.com>', 'EOF', ')"'].join('\n')
+
+  // Assert
+  expect(AiFixture.commandHits(file)).toBe(1)
+  expect(AiFixture.commandHits(subst)).toBe(1)
+})
+
+test('an AI attribution in a pull request body is caught', async () => {
+  // Assert
+  expect(AiFixture.commandHits('gh pr create --title "Fix" --body "Done.\n\nGenerated with Claude Code"')).toBe(1)
+})
+
+test('an unterminated quote in a git commit raises no hit and does not throw', async () => {
+  // Act
+  const hits = Rules.inspectCommand('git commit -m "Add x', NO_CONTEXT)
+
+  // Assert
+  expect(hits.filter(h => h.rule === 'ai-mention')).toEqual([])
+})

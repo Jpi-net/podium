@@ -85,3 +85,20 @@ test('a colleague is drawn inside its declared box', () => {
   }
   expect(changedOutside).toBe(0)
 })
+
+test('plug sockets mirror around the centre and the edge sits at the sprite desk corner', () => {
+  // Act
+  const left = Colleagues.plug(20, 16, 1, -1)
+  const right = Colleagues.plug(20, 16, 1, 1)
+
+  // Assert
+  expect(left.socket.x).toBeLessThan(20)
+  expect(right.socket.x).toBeGreaterThan(20)
+  expect(Math.abs(20 - left.socket.x - (right.socket.x - 20))).toBeLessThanOrEqual(0.5)
+  expect(left.socket.y).toBe(right.socket.y)
+  expect(Math.abs(left.edge.x - 20)).toBeGreaterThan(Math.abs(left.socket.x - 20))
+  expect(Math.abs(right.edge.x - 20)).toBeGreaterThan(Math.abs(right.socket.x - 20))
+  expect(right.edge.y).toBeGreaterThan(right.socket.y)
+  expect(right.edge.y).toBeLessThan(16 + Colleagues.HEIGHT / 2)
+  expect(Math.abs(right.edge.x - 20)).toBeLessThanOrEqual(Colleagues.WIDTH / 2)
+})

@@ -1,6 +1,7 @@
 import { expect, test } from 'claude-code/testing'
-import { Canvas, type RenderMode, type Rgb } from '../hooks/canvas'
-import { Effects, type Ambience, type Celebration, type Holiday, type Place, type Season, type SolarDay, type TimeOfDay } from '../hooks/effects'
+import { Canvas, type Point, type RenderMode, type Rgb } from '../hooks/canvas'
+import { Office, type Room } from '../hooks/office'
+import { Effects, type Ambience, type Celebration, type Holiday, type Pane, type Place, type Season, type SolarDay, type TimeOfDay } from '../hooks/effects'
 
 class EffectsFixture {
   static readonly MODES: readonly RenderMode[] = ['quad', 'hd']
@@ -78,6 +79,35 @@ class EffectsFixture {
     return EffectsFixture.render(mode, () => undefined) !== EffectsFixture.render(mode, draw)
   }
 
+  static outdoor(canvas: Canvas, frame: number, ambience: Ambience): void {
+    const room = Office.room(canvas, canvas.width / 2, 20, 10)
+    Effects.outdoor(canvas, frame, EffectsFixture.NOW, ambience, [], Office.pane(canvas, room))
+  }
+
+  static indoor(canvas: Canvas, frame: number, ambience: Ambience): void {
+    const room = Office.room(canvas, canvas.width / 2, 20, 10)
+    Effects.indoor(canvas, frame, EffectsFixture.NOW, ambience, room, Office.pane(canvas, room))
+  }
+
+  static inked(draw: (canvas: Canvas, room: Room, pane: Pane) => void): { points: Point[]; room: Room; pane: Pane } {
+    const probe = new Canvas(84, 30, 'hd')
+    const room = Office.room(probe, probe.width / 2, 20, 10)
+    const pane = Office.pane(probe, room)
+    const blank = atob(EffectsFixture.render('hd', () => undefined))
+    const drawn = atob(EffectsFixture.render('hd', canvas => draw(canvas, room, pane)))
+    const width = 84 * Canvas.HD_CELL_WIDTH
+    const points: Point[] = []
+    for (let i = 0; i < drawn.length; i += 4) {
+      if (drawn.slice(i, i + 3) === blank.slice(i, i + 3)) continue
+      points.push({ x: (i / 4) % width / EffectsFixture.HD_PIXELS_PER_UNIT, y: Math.floor(i / 4 / width) / EffectsFixture.HD_PIXELS_PER_UNIT })
+    }
+    return { points, room, pane }
+  }
+
+  static differs(mode: RenderMode, draw: (canvas: Canvas, ambience: Ambience) => void, base: Ambience, other: Ambience): boolean {
+    return EffectsFixture.render(mode, canvas => draw(canvas, base)) !== EffectsFixture.render(mode, canvas => draw(canvas, other))
+  }
+
   static celebration(kind: Celebration['kind'], age: number): Ambience {
     return EffectsFixture.ambience({ celebrations: [{ kind, at: EffectsFixture.NOW - age }] })
   }
@@ -89,7 +119,7 @@ class EffectsFixture {
   static decorLuminance(season: Season, timeOfDay: TimeOfDay): number {
     const canvas = new Canvas(84, 30, 'hd')
     canvas.paint(() => [0, 0, 0])
-    const draw = (Effects as unknown as { seasonBackground: (c: Canvas, frame: number, a: Ambience) => void }).seasonBackground
+    const draw = (Effects as unknown as { seasonOutdoor: (c: Canvas, frame: number, a: Ambience) => void }).seasonOutdoor
     draw.call(Effects, canvas, 37.4, EffectsFixture.ambience({ season, timeOfDay }))
     const encoded = canvas.encode()
     const bytes = atob(encoded.kind === 'cells' ? encoded.cells : encoded.rgba)
@@ -418,7 +448,7 @@ test('celestialSpot moves the sun from sunrise on the left to sunset on the righ
   expect(rise.lift).toBeLessThan(0.1)
 })
 
-test('background shows the moon from civil dusk only', () => {
+test('the moon replaces the sun from civil dusk only', () => {
   // Arrange
   const sun = EffectsFixture.sunOf(EffectsFixture.brussels(2026, 9, 15, 12, 0))
   const at = (minute: number): Ambience => EffectsFixture.brussels(2026, 9, 15, Math.floor(minute / 60), Math.round(minute % 60))
@@ -444,20 +474,21 @@ test('ambience copies the other inputs', () => {
   expect([ambience.isDisco, ambience.idleMs, ambience.isDebuggerActive, ambience.celebrations]).toEqual([true, 1234, true, celebrations])
 })
 
-test('sky stays dark enough for robots and labels all day long', () => {
-  for (const holiday of ['none', 'valentine', 'star-wars'] as const) {
-    for (let minute = 0; minute < 1440; minute += 5) {
-      // Arrange
-      const ambience = EffectsFixture.ambience({ holiday, minuteOfDay: minute })
+test('sky is a bright blue by day and dark at night', () => {
+  // Arrange
+  const day = EffectsFixture.brussels(2026, 10, 29, 12, 30)
+  const night = EffectsFixture.brussels(2026, 10, 29, 23, 30)
 
-      // Act
-      const sky = Effects.sky(ambience, minute)
+  // Act
+  const noon = Effects.sky(day, 0)
+  const dark = Effects.sky(night, 0)
 
-      // Assert
-      expect(EffectsFixture.luminance(sky.top)).toBeLessThanOrEqual(60)
-      expect(EffectsFixture.luminance(sky.bottom)).toBeLessThanOrEqual(70)
-    }
-  }
+  // Assert
+  expect(noon.top[2]).toBeGreaterThan(noon.top[0] + 60)
+  expect(EffectsFixture.luminance(noon.bottom)).toBeGreaterThan(130)
+  expect(EffectsFixture.luminance(noon.top)).toBeGreaterThan(100)
+  expect(EffectsFixture.luminance(dark.top)).toBeLessThanOrEqual(30)
+  expect(EffectsFixture.luminance(dark.bottom)).toBeLessThanOrEqual(40)
 })
 
 test('sky shows the stars by time slot', () => {
@@ -487,7 +518,7 @@ test('sky blends smoothly from one minute to the next', () => {
   expect(worst).toBeLessThan(3)
 })
 
-test('background draws every time of day, season and holiday in quad and hd', () => {
+test('outdoor draws every time of day, season and holiday in quad and hd', () => {
   // Arrange
   const ambiences = [
     ...EffectsFixture.TIMES.map(timeOfDay => EffectsFixture.ambience({ timeOfDay })),
@@ -499,7 +530,7 @@ test('background draws every time of day, season and holiday in quad and hd', ()
   for (const mode of EffectsFixture.MODES) {
     for (const ambience of ambiences) {
       // Act
-      const changed = EffectsFixture.changes(mode, canvas => Effects.background(canvas, 37.4, EffectsFixture.NOW, ambience))
+      const changed = EffectsFixture.changes(mode, canvas => EffectsFixture.outdoor(canvas, 37.4, ambience))
 
       // Assert
       expect(changed).toBe(true)
@@ -578,9 +609,10 @@ test('effects animate smoothly and deterministically with fractional frames', ()
     EffectsFixture.ambience({ season: 'summer', timeOfDay: 'night', isDisco: true }),
   ]
   const draw = (frame: number, ambience: Ambience) => (canvas: Canvas): void => {
-    Effects.background(canvas, frame, EffectsFixture.NOW, ambience)
+    EffectsFixture.outdoor(canvas, frame, ambience)
+    EffectsFixture.indoor(canvas, frame, ambience)
+    Effects.confetti(canvas, frame, EffectsFixture.NOW, ambience)
     Effects.hat(canvas, 42, 40, 10, ambience, frame, 0.4)
-    Effects.foreground(canvas, frame, EffectsFixture.NOW, ambience)
     Effects.teleport(canvas, { x: 66, y: 44 }, { x: 42, y: 30 }, 0.5, [181, 140, 255], frame)
   }
 
@@ -609,12 +641,12 @@ test('sleeping draws rising Zs that move over time', () => {
   }
 })
 
-test('celebrate draws every celebration kind while it is fresh', () => {
+test('outdoor draws fireworks and rockets while they are fresh', () => {
   for (const mode of EffectsFixture.MODES) {
-    for (const kind of ['confetti', 'fireworks', 'rocket'] as const) {
+    for (const kind of ['fireworks', 'rocket'] as const) {
       for (const age of [300, 1500, 3000]) {
         // Act
-        const changed = EffectsFixture.changes(mode, canvas => Effects.celebrate(canvas, { x: 42, y: 30 }, EffectsFixture.NOW, 10.5, EffectsFixture.celebration(kind, age)))
+        const changed = EffectsFixture.differs(mode, (canvas, ambience) => EffectsFixture.outdoor(canvas, 10.5, ambience), EffectsFixture.ambience({}), EffectsFixture.celebration(kind, age))
 
         // Assert
         expect(changed).toBe(true)
@@ -623,13 +655,29 @@ test('celebrate draws every celebration kind while it is fresh', () => {
   }
 })
 
-test('celebrate ignores expired and future celebrations', () => {
-  for (const age of [-10, Effects.CELEBRATION_MS, Effects.CELEBRATION_MS + 500]) {
-    // Act
-    const changed = EffectsFixture.changes('hd', canvas => Effects.celebrate(canvas, { x: 42, y: 30 }, EffectsFixture.NOW, 10, EffectsFixture.celebration('fireworks', age)))
+test('confetti draws party paper from a confetti celebration while it is fresh', () => {
+  for (const mode of EffectsFixture.MODES) {
+    for (const age of [300, 1500, 3000]) {
+      // Act
+      const changed = EffectsFixture.changes(mode, canvas => Effects.confetti(canvas, 10.5, EffectsFixture.NOW, EffectsFixture.celebration('confetti', age)))
 
-    // Assert
-    expect(changed).toBe(false)
+      // Assert
+      expect(changed).toBe(true)
+    }
+  }
+})
+
+test('outdoor and confetti ignore expired and future celebrations', () => {
+  for (const age of [-10, Effects.CELEBRATION_MS, Effects.CELEBRATION_MS + 500]) {
+    for (const kind of ['confetti', 'fireworks', 'rocket'] as const) {
+      // Act
+      const outdoor = EffectsFixture.differs('hd', (canvas, ambience) => EffectsFixture.outdoor(canvas, 10, ambience), EffectsFixture.ambience({}), EffectsFixture.celebration(kind, age))
+      const paper = EffectsFixture.changes('hd', canvas => Effects.confetti(canvas, 10, EffectsFixture.NOW, EffectsFixture.celebration(kind, age)))
+
+      // Assert
+      expect(outdoor).toBe(false)
+      expect(paper).toBe(false)
+    }
   }
 })
 
@@ -657,24 +705,45 @@ test('teleport draws a beam between the slot and the orchestrator', () => {
   }
 })
 
-test('foreground draws the ladybug, party confetti, seasonal flurries and mirror ball', () => {
+test('indoor draws the ladybug and the mirror ball', () => {
   // Arrange
-  const ambiences = [
-    EffectsFixture.ambience({ isDebuggerActive: true }),
-    EffectsFixture.ambience({ isFridayParty: true }),
-    EffectsFixture.ambience({ holiday: 'christmas' }),
-    EffectsFixture.ambience({ holiday: 'new-year' }),
-    EffectsFixture.ambience({ holiday: 'carnaval' }),
-    EffectsFixture.ambience({ season: 'winter' }),
-    EffectsFixture.ambience({ season: 'spring' }),
-    EffectsFixture.ambience({ season: 'autumn' }),
-    EffectsFixture.ambience({ isDisco: true }),
-  ]
+  const ambiences = [EffectsFixture.ambience({ isDebuggerActive: true }), EffectsFixture.ambience({ isDisco: true })]
 
   for (const mode of EffectsFixture.MODES) {
     for (const ambience of ambiences) {
       // Act
-      const changed = EffectsFixture.changes(mode, canvas => Effects.foreground(canvas, 40, EffectsFixture.NOW, ambience))
+      const changed = EffectsFixture.changes(mode, canvas => EffectsFixture.indoor(canvas, 40, ambience))
+
+      // Assert
+      expect(changed).toBe(true)
+    }
+  }
+})
+
+test('confetti draws party paper on the Friday party, new year and carnaval', () => {
+  // Arrange
+  const ambiences = [EffectsFixture.ambience({ isFridayParty: true }), EffectsFixture.ambience({ holiday: 'new-year' }), EffectsFixture.ambience({ holiday: 'carnaval' })]
+
+  for (const mode of EffectsFixture.MODES) {
+    for (const ambience of ambiences) {
+      // Act
+      const changed = EffectsFixture.changes(mode, canvas => Effects.confetti(canvas, 40, EffectsFixture.NOW, ambience))
+
+      // Assert
+      expect(changed).toBe(true)
+    }
+  }
+})
+
+test('outdoor draws the seasonal flurries', () => {
+  // Arrange
+  const plain = EffectsFixture.ambience({ season: 'summer' })
+  const flurries = [EffectsFixture.ambience({ holiday: 'christmas' }), EffectsFixture.ambience({ season: 'winter' }), EffectsFixture.ambience({ season: 'spring' }), EffectsFixture.ambience({ season: 'autumn' })]
+
+  for (const mode of EffectsFixture.MODES) {
+    for (const ambience of flurries) {
+      // Act
+      const changed = EffectsFixture.differs(mode, (canvas, a) => EffectsFixture.outdoor(canvas, 40, a), plain, ambience)
 
       // Assert
       expect(changed).toBe(true)
@@ -686,9 +755,9 @@ test('effects are deterministic for the same inputs', () => {
   // Arrange
   const ambience = EffectsFixture.ambience({ holiday: 'christmas', isDisco: true, isDebuggerActive: true, celebrations: [{ kind: 'confetti', at: EffectsFixture.NOW - 900 }] })
   const draw = (canvas: Canvas): void => {
-    Effects.background(canvas, 77.3, EffectsFixture.NOW, ambience)
-    Effects.celebrate(canvas, { x: 42, y: 30 }, EffectsFixture.NOW, 77.3, ambience)
-    Effects.foreground(canvas, 77.3, EffectsFixture.NOW, ambience)
+    EffectsFixture.outdoor(canvas, 77.3, ambience)
+    EffectsFixture.indoor(canvas, 77.3, ambience)
+    Effects.confetti(canvas, 77.3, EffectsFixture.NOW, ambience)
   }
 
   // Act
@@ -749,4 +818,45 @@ test('comet crosses the night sky in some deterministic windows only', () => {
   expect(shown.some(Boolean)).toBe(true)
   expect(shown.every(Boolean)).toBe(false)
   expect(outside.some(Boolean)).toBe(false)
+})
+
+test('easter eggs stand on the floor and never reach the wall', () => {
+  // Arrange
+  const ambience = EffectsFixture.ambience({ holiday: 'easter' })
+
+  // Act
+  const { points, room } = EffectsFixture.inked((canvas, r, p) => Effects.indoor(canvas, 10, EffectsFixture.NOW, ambience, r, p))
+
+  // Assert
+  expect(points.length).toBeGreaterThan(0)
+  expect(points.filter(p => p.y < room.floorY - 5)).toEqual([])
+  expect(points.some(p => p.y > room.floorY)).toBe(true)
+})
+
+test('the mirror ball hangs from the top centre of the canvas', () => {
+  // Arrange
+  const ambience = EffectsFixture.ambience({ isDisco: true })
+
+  // Act
+  const { points } = EffectsFixture.inked((canvas, r, p) => Effects.indoor(canvas, 10, EffectsFixture.NOW, ambience, r, p))
+
+  // Assert
+  const top = points.filter(p => p.y < 5)
+  expect(top.length).toBeGreaterThan(0)
+  expect(top.filter(p => Math.abs(p.x - 42) > 14)).toEqual([])
+})
+
+test('the Friday 13th cat stays inside the canvas and above the sill', () => {
+  // Arrange
+  const ambience = EffectsFixture.ambience({ holiday: 'friday-13' })
+
+  for (const frame of [200, 300, 400]) {
+    // Act
+    const { points, room } = EffectsFixture.inked((canvas, r, p) => Effects.indoor(canvas, frame, EffectsFixture.NOW, ambience, r, p))
+    const cat = points.filter(p => p.y < room.sillY)
+
+    // Assert
+    expect(cat.length).toBeGreaterThan(0)
+    expect(cat.filter(p => p.x < 0 || p.x >= 84 || p.y < room.sillY - 12)).toEqual([])
+  }
 })

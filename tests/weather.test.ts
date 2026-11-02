@@ -1,7 +1,10 @@
 import { expect, test } from 'claude-code/testing'
+import { Canvas } from '../hooks/canvas'
 import { Effects } from '../hooks/effects'
+import { Office } from '../hooks/office'
 import { WeatherFx } from '../hooks/weather'
 import { Scene, type SceneInput } from '../hooks/scene'
+import type { Pane } from '../hooks/effects'
 import type { FlowAgent, FlowEvent, FlowEventKind } from '../types'
 
 class WeatherFixture {
@@ -27,6 +30,16 @@ class WeatherFixture {
       ambience: Effects.ambience(holiday, false, 0, false, []),
       positions: new Map(),
     }
+  }
+
+  static pixels(input: SceneInput): { data: Uint8Array; width: number; head: number; pane: Pane } {
+    const result = Scene.graph({ ...input, mode: 'hd' })
+    const encoded = result.encoded
+    if (encoded.kind !== 'rgba') throw new Error('expected rgba')
+    const avatar = result.obstacles?.[result.labels.length] ?? { x: 0, y: 0, w: 0, h: 0 }
+    const canvas = new Canvas(input.columns, input.rows, 'hd')
+    const room = Office.room(canvas, canvas.width / 2, avatar.y + avatar.h, avatar.w / 2)
+    return { data: Uint8Array.from(atob(encoded.rgba), ch => ch.charCodeAt(0)), width: encoded.width, head: avatar.y + avatar.h * 0.2, pane: Office.pane(canvas, room) }
   }
 
   static cells(input: SceneInput): string {
@@ -69,7 +82,7 @@ test('does not show the rainbow after a green verification that followed another
   expect(weather).toEqual({ isRaining: false, clearing: -1 })
 })
 
-test('opens the umbrella instead of the holiday hat while it rains', () => {
+test('rain repaints the scene on a holiday and counts as animated', () => {
   // Arrange
   const christmas = new Date(2026, 11, 24, 12, 0)
   const failed = [WeatherFixture.event(1, 5000, 'verif', 'build failed (12 s)', true)]
@@ -82,4 +95,28 @@ test('opens the umbrella instead of the holiday hat while it rains', () => {
   expect(rainy === dry).toBe(false)
   expect(WeatherFx.isAnimated(failed, WeatherFixture.NOW)).toBe(true)
   expect(WeatherFx.isAnimated([], WeatherFixture.NOW)).toBe(false)
+})
+
+test('rain draws on the glass and never opens an umbrella', () => {
+  // Arrange
+  const christmas = new Date(2026, 11, 24, 12, 0)
+  const failed = [WeatherFixture.event(1, 60_000, 'verif', 'build failed (12 s)', true)]
+
+  // Act
+  const dry = WeatherFixture.pixels(WeatherFixture.input([], [], christmas))
+  const rainy = WeatherFixture.pixels(WeatherFixture.input([], failed, christmas))
+
+  // Assert
+  const stray: number[] = []
+  const wet: number[] = []
+  for (let i = 0; i < dry.data.length; i += 4) {
+    if (dry.data[i] === rainy.data[i] && dry.data[i + 1] === rainy.data[i + 1] && dry.data[i + 2] === rainy.data[i + 2]) continue
+    const x = ((i / 4) % dry.width) / 6
+    const y = Math.floor(i / 4 / dry.width) / 6
+    const isInside = x >= dry.pane.left - 0.2 && x <= dry.pane.right + 0.2 && y >= dry.pane.top - 0.2 && y <= dry.pane.bottom + 0.2
+    if (isInside) wet.push(i)
+    else if (y < dry.head) stray.push(i)
+  }
+  expect(wet.length).toBeGreaterThan(0)
+  expect(stray).toEqual([])
 })

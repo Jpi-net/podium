@@ -10,6 +10,13 @@ class OfficeFixture {
     for (let i = 0; i < raw.length; i += 4) sum += raw.charCodeAt(i) + raw.charCodeAt(i + 1) + raw.charCodeAt(i + 2)
     return sum
   }
+
+  static pixel(canvas: Canvas, x: number, y: number): [number, number, number] {
+    const encoded = canvas.encode()
+    const raw = atob(encoded.kind === 'rgba' ? encoded.rgba : '')
+    const i = (Math.floor(y * (Canvas.HD_CELL_HEIGHT / 2)) * canvas.columns * Canvas.HD_CELL_WIDTH + Math.floor(x * Canvas.HD_CELL_WIDTH)) * 4
+    return [raw.charCodeAt(i), raw.charCodeAt(i + 1), raw.charCodeAt(i + 2)]
+  }
 }
 
 test('room puts the desk under the bust, the sill at the desk and the floor at the bottom', () => {
@@ -37,6 +44,24 @@ test('room keeps the desk above the floor on a short canvas', () => {
 
   // Assert
   expect(room.deskY).toBeLessThanOrEqual(room.floorY - 9)
+})
+
+test('pane lies between the curtains, below the rod and above the sill', () => {
+  // Arrange
+  const canvas = new Canvas(84, 36, 'hd')
+  const room = Office.room(canvas, 42, 45, 11)
+
+  // Act
+  const pane = Office.pane(canvas, room)
+
+  // Assert
+  expect(pane.left).toBeGreaterThan(0)
+  expect(pane.right).toBeLessThan(canvas.width)
+  expect(Math.abs(pane.left - (canvas.width - pane.right))).toBeLessThanOrEqual(0.5)
+  expect(pane.right - pane.left).toBeGreaterThan(canvas.width / 2)
+  expect(pane.top).toBeGreaterThanOrEqual(2)
+  expect(pane.bottom).toBeLessThan(room.sillY)
+  expect(pane.bottom).toBeGreaterThan(pane.top)
 })
 
 test('the desk lamp lights the room when it is on', () => {
@@ -67,4 +92,36 @@ test('the office is dimmer at night than at midday', () => {
 
   // Assert
   expect(OfficeFixture.brightness(night)).toBeLessThan(OfficeFixture.brightness(day))
+})
+
+test('ports are distinct, inside the switch and ordered left to right', () => {
+  // Arrange
+  const canvas = new Canvas(84, 36, 'quad')
+  const room = Office.room(canvas, 42, 45, 11)
+  const mid = (room.deskLeft + room.deskRight) / 2
+
+  // Act
+  const ports = [0, 1, 2, 3].map(i => Office.port(room, i, 4))
+
+  // Assert
+  expect(new Set(ports.map(p => p.x)).size).toBe(4)
+  expect(ports.every(p => Math.abs(p.x - mid) <= 5 && p.y > room.floorY)).toBe(true)
+  expect(ports.map(p => p.x)).toEqual(ports.map(p => p.x).sort((a, b) => a - b))
+})
+
+test('the hub draws on the rug under the desk', () => {
+  // Arrange
+  const canvas = new Canvas(84, 36, 'hd')
+  const room = Office.room(canvas, 42, 45, 11)
+  const mid = (room.deskLeft + room.deskRight) / 2
+  const port = Office.port(room, 0, 1)
+  const blank = OfficeFixture.pixel(canvas, mid, room.floorY + 1.5)
+
+  // Act
+  Office.hub(canvas, room, 1, 1, 0)
+
+  // Assert
+  expect(OfficeFixture.pixel(canvas, mid, room.floorY + 1.5)).not.toEqual(blank)
+  expect(OfficeFixture.pixel(canvas, port.x + 0.25, port.y + 0.5)).not.toEqual(blank)
+  expect(OfficeFixture.pixel(canvas, mid, room.deskY + 8 + 0.5)).not.toEqual(OfficeFixture.pixel(canvas, mid - 6, room.deskY + 8 + 0.5))
 })

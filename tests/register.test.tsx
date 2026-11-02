@@ -1439,3 +1439,123 @@ test('the panel opens by itself in a project set up with a maestro manifest', as
   // Assert
   expect(sink.opens ?? 0).toBeGreaterThan(0)
 })
+
+class ReviewFixture {
+  static readonly ANSWER = ['## Verdict', 'CHANGES REQUIRED', '', '- **[Major]** x', '- [Minor] y'].join('\n')
+}
+
+test('TO DO names the major findings of a failed review that has no critical one', async ($, on) => {
+  // Arrange
+  Engine.stub(on)
+  on('agent.spawn', () => ({ model: 'claude-opus-5-5', agentId: 'r1' }))
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await $.agent.spawn(Engine.spawn('code-reviewer', 'Review'))
+  await $.turn.complete({ answer: ReviewFixture.ANSWER, text: '', durationMs: 10, isAborted: false, turnId: 't1', reason: 'answer', agentId: 'r1' } as never)
+
+  // Act
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal', viewport: VIEWPORT })
+
+  // Assert
+  const line = (await ui.find({ type: 'Text', text: /Review code/ }))?.text ?? ''
+  expect(line).toContain('1 major')
+  expect(line).not.toContain('0 critical')
+  await ui.unmount()
+})
+
+test('a verification command denied by a hook leaves the step unchanged', async ($, on) => {
+  // Arrange
+  Engine.stub(on, false)
+  on('tool.call', () => ({ deny: 'hook blocked this command' }) as never)
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+
+  // Act
+  await $.tool.call({ tool: 'Bash', command: 'dotnet build Contoso.Policies.slnx -c Debug', agentId: 'l1' })
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal', viewport: VIEWPORT })
+  await ui.press({ key: 'tab-livraison' })
+
+  // Assert
+  expect((await ui.find({ type: 'Text', text: /^. Build\s/ }))?.text).not.toMatch(/✗/)
+  expect(await ui.find({ type: 'Text', text: /Fix build/ })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('a verification command blocked by a project hook leaves the step unchanged', async ($, on) => {
+  // Arrange
+  Engine.stub(on, false)
+  on('tool.call', () => ({ result: {}, isError: true, text: 'PreToolUse hook blocked: no builds on main' }) as never)
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+
+  // Act
+  await $.tool.call({ tool: 'Bash', command: 'dotnet build Contoso.Policies.slnx -c Debug', agentId: 'l1' })
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal', viewport: VIEWPORT })
+  await ui.press({ key: 'tab-livraison' })
+
+  // Assert
+  expect((await ui.find({ type: 'Text', text: /^. Build\s/ }))?.text).not.toMatch(/✗/)
+  expect(await ui.find({ type: 'Text', text: /Fix build/ })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('after a reload a verification step left running shows stale', async ($, on) => {
+  // Arrange
+  Engine.stub(on, false)
+  on('tool.call', () => {
+    throw new Error('process killed mid-command')
+  })
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await $.tool.call({ tool: 'Bash', command: 'dotnet build Contoso.Policies.slnx -c Debug', agentId: 'l1' }).catch(() => undefined)
+  const before = await $.ui.mount({ ...PANE, surface: 'terminal', viewport: VIEWPORT })
+  await before.press({ key: 'tab-livraison' })
+  const running = (await before.find({ type: 'Text', text: /^. Build/ }))?.text
+  await before.unmount()
+
+  // Act
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal', viewport: VIEWPORT })
+  await ui.press({ key: 'tab-livraison' })
+
+  // Assert
+  expect(running).toContain('running since')
+  expect((await ui.find({ type: 'Text', text: /^. Build/ }))?.text).toMatch(/^. Build\s+no result/)
+  await ui.unmount()
+})
+
+test('the reset command empties the verification, the alerts and the events', async ($, on) => {
+  // Arrange
+  const state = { isFixed: false }
+  Engine.stub(on, false)
+  Build.failing(on, state)
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await $.tool.call({ tool: 'Bash', command: Build.COMMAND, agentId: 'l1' })
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal', viewport: VIEWPORT })
+  const before = await ui.find({ type: 'Text', text: /^✗ Build failed/ })
+
+  // Act
+  await $.command.run({ command: 'maestro-stage', args: 'reset' } as never)
+
+  // Assert
+  expect(before).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^✗ Build failed/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /TO DO/ })).toBeUndefined()
+  await ui.press({ key: 'tab-livraison' })
+  expect((await ui.find({ type: 'Text', text: /^. Build\s/ }))?.text).not.toMatch(/✗/)
+  await ui.press({ key: 'tab-historique' })
+  expect(await ui.find({ type: 'Text', text: /Build failed|build failed/ })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('a failing verification whose output quotes hook words still turns the step red', async ($, on) => {
+  // Arrange
+  Engine.stub(on, false)
+  on('tool.call', () => ({ result: {}, isError: true, text: 'Exit code 1\n(fail) a verification command denied by a hook' }) as never)
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+
+  // Act
+  await $.tool.call({ tool: 'Bash', command: 'dotnet build Contoso.Policies.slnx -c Debug', agentId: 'l1' })
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal', viewport: VIEWPORT })
+  await ui.press({ key: 'tab-livraison' })
+
+  // Assert
+  expect((await ui.find({ type: 'Text', text: /^. Build\s/ }))?.text).toMatch(/✗/)
+  await ui.unmount()
+})

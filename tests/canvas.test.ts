@@ -137,3 +137,114 @@ test('glow is additive', async () => {
   const centre = cells[(2 * 10 + 5) * 3 + 1] ?? 0
   expect((centre >> 16) & 255).toBeGreaterThan(100)
 })
+
+class ClipFixture {
+  static readonly RECT = { left: 5, top: 5, right: 10, bottom: 10 }
+
+  static clipped(): Canvas {
+    const canvas = new Canvas(20, 10, 'hd')
+    canvas.clip(ClipFixture.RECT)
+    return canvas
+  }
+}
+
+test('clip restricts block to the rect', async () => {
+  // Arrange
+  const canvas = ClipFixture.clipped()
+
+  // Act
+  canvas.block(0, 0, 20, 20, Fixtures.RED)
+
+  // Assert
+  const image = Decoder.rgba(canvas.encode())
+  expect(Decoder.red(image, 7, 7)).toBe(255)
+  expect(Decoder.red(image, 2, 2)).toBe(0)
+  expect(Decoder.red(image, 12, 7)).toBe(0)
+  expect(Decoder.red(image, 7, 12)).toBe(0)
+})
+
+test('clip restricts shapes to the rect', async () => {
+  // Arrange
+  const canvas = ClipFixture.clipped()
+
+  // Act
+  canvas.fillCircle(7, 7, 30, Fixtures.RED)
+  canvas.fillRect(0, 14, 20, 4, Fixtures.RED)
+
+  // Assert
+  const image = Decoder.rgba(canvas.encode())
+  expect(Decoder.red(image, 7, 7)).toBe(255)
+  expect(Decoder.red(image, 2, 7)).toBe(0)
+  expect(Decoder.red(image, 15, 7)).toBe(0)
+  expect(Decoder.red(image, 7, 15)).toBe(0)
+})
+
+test('clip restricts glow to the rect', async () => {
+  // Arrange
+  const canvas = ClipFixture.clipped()
+
+  // Act
+  canvas.glow(7, 7, 12, Fixtures.RED, 1)
+
+  // Assert
+  const image = Decoder.rgba(canvas.encode())
+  expect(Decoder.red(image, 7, 7)).toBeGreaterThan(0)
+  expect(Decoder.red(image, 3, 7)).toBe(0)
+  expect(Decoder.red(image, 13, 7)).toBe(0)
+  expect(Decoder.red(image, 7, 3)).toBe(0)
+})
+
+test('clip without a rect clears the restriction', async () => {
+  // Arrange
+  const canvas = ClipFixture.clipped()
+
+  // Act
+  canvas.clip()
+  canvas.block(0, 0, 20, 20, Fixtures.RED)
+
+  // Assert
+  const image = Decoder.rgba(canvas.encode())
+  expect(Decoder.red(image, 2, 2)).toBe(255)
+  expect(Decoder.red(image, 15, 15)).toBe(255)
+})
+
+test('clip restricts line and curve to the rect', async () => {
+  // Arrange
+  const canvas = ClipFixture.clipped()
+
+  // Act
+  canvas.line({ x: 0, y: 7 }, { x: 20, y: 7 }, 1, Fixtures.RED)
+  canvas.curve({ x: 0, y: 9 }, { x: 6, y: 9 }, { x: 14, y: 9 }, { x: 20, y: 9 }, 1, Fixtures.RED)
+
+  // Assert
+  const image = Decoder.rgba(canvas.encode())
+  expect(Decoder.red(image, 7, 7)).toBe(255)
+  expect(Decoder.red(image, 7, 9)).toBeGreaterThan(0)
+  expect(Decoder.red(image, 2, 7)).toBe(0)
+  expect(Decoder.red(image, 15, 7)).toBe(0)
+  expect(Decoder.red(image, 2, 9)).toBe(0)
+  expect(Decoder.red(image, 15, 9)).toBe(0)
+})
+
+test('clip restricts hd text to the rect', async () => {
+  // Arrange
+  const canvas = new Canvas(20, 5, 'hd')
+  canvas.clip({ left: 0, top: 0, right: 3, bottom: 4 })
+
+  // Act
+  canvas.text(0, 0, 'EEEEEE', Fixtures.WHITE, [0, 0, 0])
+
+  // Assert
+  const image = Decoder.rgba(canvas.encode())
+  let inside = 0
+  let outside = 0
+  for (let y = 0; y < 12; y++) {
+    for (let x = 0; x < 36; x++) {
+      if ((image.bytes[(y * image.width + x) * 4] ?? 0) === 0) continue
+      if (x < 18) inside++
+      else outside++
+    }
+  }
+  expect(inside).toBeGreaterThan(0)
+  expect(outside).toBe(0)
+})

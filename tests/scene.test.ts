@@ -1,11 +1,13 @@
 import { expect, test } from 'claude-code/testing'
-import { Canvas, type Point, type Rgb } from '../hooks/canvas'
-import { Effects, type Ambience, type Obstacle } from '../hooks/effects'
+import { Canvas, type Point } from '../hooks/canvas'
+import { Effects, type Ambience, type Celebration, type Obstacle, type Pane } from '../hooks/effects'
 import { Colleagues } from '../hooks/colleagues'
 import { Office } from '../hooks/office'
 import { Robots } from '../hooks/robots'
-import { Scene, type Cable, type GraphLabel, type SceneInput, type ToolHit } from '../hooks/scene'
+import { Scene, type GraphLabel, type GraphResult, type SceneInput } from '../hooks/scene'
 import { Theme } from '../hooks/theme'
+import type { Plug, Wire } from '../hooks/wiring'
+import { Wiring } from '../hooks/wiring'
 import type { FlowAgent, FlowEvent, FlowEventKind } from '../types'
 
 class SceneFixture {
@@ -591,105 +593,166 @@ test('graph draws a visible shockwave around the avatar after a successful verif
   expect(SceneFixture.changedCells(quiet, pulse, 84).length).toBeGreaterThan(10)
 })
 
-class CableFixture {
-  static readonly COLUMNS = 40
-  static readonly ROWS = 10
-  static readonly RED: Rgb = [255, 40, 40]
+class WireFixture {
+  static readonly ACTIVE_MS = 8000
 
-  static canvas(): Canvas {
-    return new Canvas(CableFixture.COLUMNS, CableFixture.ROWS, 'hd')
+  static agents(count: number): FlowAgent[] {
+    return Array.from({ length: count }, (_, i) => SceneFixture.agent(`a${i}`, `type-${i}`, '', 100 - i))
   }
 
-  static straight(): Cable {
-    return Scene.cable({ x: 2, y: 10 }, { x: 14, y: 10 }, { x: 26, y: 10 }, { x: 38, y: 10 }, Theme.ACCENT, CableFixture.RED, 0.3)
+  static tools(agents: FlowAgent[], ageMs: number): FlowEvent[] {
+    return agents.map((a, i) => SceneFixture.event(i + 1, a.id, 'tool', 'Read foo.ts', ageMs))
   }
 
-  static pixels(canvas: Canvas): Uint8Array {
-    const encoded = canvas.encode()
-    const raw = atob(encoded.kind === 'rgba' ? encoded.rgba : encoded.cells)
-    return Uint8Array.from(raw, ch => ch.charCodeAt(0))
+  static render(agents: FlowAgent[], events: FlowEvent[], columns: number, rows: number): { data: Uint8Array; boxes: Obstacle[]; positions: Map<string, Point>; labels: number } {
+    const positions = new Map<string, Point>()
+    const input: SceneInput = { ...SceneFixture.input(agents, SceneFixture.NOW, 10, 0, true, 0, positions), events, columns, rows, mode: 'hd' }
+    const result = Scene.graph(input)
+    const raw = atob(result.encoded.kind === 'rgba' ? result.encoded.rgba : '')
+    return { data: Uint8Array.from(raw, ch => ch.charCodeAt(0)), boxes: result.obstacles ?? [], positions, labels: result.labels.length }
   }
 
-  static pixel(data: Uint8Array, x: number, y: number): Rgb {
-    const i = (Math.floor(y * (Canvas.HD_CELL_HEIGHT / 2)) * CableFixture.COLUMNS * Canvas.HD_CELL_WIDTH + Math.floor(x * Canvas.HD_CELL_WIDTH)) * 4
-    return [data[i] ?? 0, data[i + 1] ?? 0, data[i + 2] ?? 0]
-  }
-
-  static lit(data: Uint8Array, predicate: (x: number, y: number) => boolean): number {
-    const width = CableFixture.COLUMNS * Canvas.HD_CELL_WIDTH
-    let count = 0
-    for (let i = 0; i < data.length; i += 4) {
-      const p = i / 4
-      const x = (p % width) / Canvas.HD_CELL_WIDTH
-      const y = Math.floor(p / width) / (Canvas.HD_CELL_HEIGHT / 2)
-      if ((data[i] ?? 0) + (data[i + 1] ?? 0) + (data[i + 2] ?? 0) > 60 && predicate(x, y)) count++
+  static changed(before: Uint8Array, after: Uint8Array, columns: number): Point[] {
+    const width = columns * Canvas.HD_CELL_WIDTH
+    const found: Point[] = []
+    for (let p = 0; p < before.length / 4; p++) {
+      if (before[p * 4] !== after[p * 4] || before[p * 4 + 1] !== after[p * 4 + 1] || before[p * 4 + 2] !== after[p * 4 + 2]) {
+        found.push({ x: (p % width) / Canvas.HD_CELL_WIDTH, y: Math.floor(p / width) / (Canvas.HD_CELL_HEIGHT / 2) })
+      }
     }
-    return count
+    return found
   }
 
-  static hit(age: number): ToolHit {
-    return { event: SceneFixture.event(7, 'a', 'tool', '$ npm test', age), age }
+  static floor(rows: number): number {
+    return Math.round(rows * 2 - Math.max(5, rows * 2 * 0.12))
+  }
+
+  static outside(points: Point[], boxes: Obstacle[]): Point[] {
+    return points.filter(c => !boxes.some(b => c.x >= b.x - 0.5 && c.x <= b.x + b.w + 0.5 && c.y >= b.y - 0.5 && c.y <= b.y + b.h + 0.5))
+  }
+
+  static routes(agents: FlowAgent[], events: FlowEvent[], columns: number, rows: number): { from: Plug; to: Plug; wire: Wire }[] {
+    const found: { from: Plug; to: Plug; wire: Wire }[] = []
+    const original = Wiring.route
+    Wiring.route = (from, to, floor, lane, color, seed) => {
+      const wire = original.call(Wiring, from, to, floor, lane, color, seed)
+      found.push({ from, to, wire })
+      return wire
+    }
+    try {
+      WireFixture.render(agents, events, columns, rows)
+    } finally {
+      Wiring.route = original
+    }
+    return found
+  }
+
+  static brightness(data: Uint8Array): number {
+    let sum = 0
+    for (let i = 0; i < data.length; i += 4) sum += (data[i] ?? 0) + (data[i + 1] ?? 0) + (data[i + 2] ?? 0)
+    return sum
   }
 }
 
-test('energyCable blends from the avatar teal to the robot accent along its length', async () => {
+test('graph draws no cable pixel inside the avatar box', async () => {
   // Arrange
-  const canvas = CableFixture.canvas()
+  const agents = WireFixture.agents(8)
+  const rows = Scene.graphRows(84, 70)
+  const idle = WireFixture.render(agents, [], 84, rows)
+  const avatar = idle.boxes[idle.labels] ?? { x: 0, y: 0, w: 0, h: 0 }
 
   // Act
-  Scene.energyCable(canvas, CableFixture.straight(), SceneFixture.NOW, 0, 0)
+  const lit = WireFixture.render(agents, WireFixture.tools(agents, WireFixture.ACTIVE_MS), 84, rows)
 
   // Assert
-  const data = CableFixture.pixels(canvas)
-  const start = CableFixture.pixel(data, 6, 10)
-  const end = CableFixture.pixel(data, 34, 10)
-  expect(start[1]).toBeGreaterThan(start[0])
-  expect(end[0]).toBeGreaterThan(end[1])
+  const changed = WireFixture.changed(idle.data, lit.data, 84)
+  const inside = changed.filter(c => c.x >= avatar.x && c.x <= avatar.x + avatar.w && c.y >= avatar.y && c.y <= avatar.y + avatar.h)
+  expect(changed.length).toBeGreaterThan(0)
+  expect(inside).toHaveLength(0)
 })
 
-test('returnPacket travels back from the robot to the avatar between 0.35 s and 0.9 s after a tool call', async () => {
+test('graph wires a back-row colleague', async () => {
   // Arrange
-  const cable = CableFixture.straight()
-  const draw = (age: number): Uint8Array => {
-    const canvas = CableFixture.canvas()
-    Scene.returnPacket(canvas, cable, CableFixture.hit(age))
-    return CableFixture.pixels(canvas)
-  }
+  const agents = WireFixture.agents(8)
+  const rows = Scene.graphRows(84, 70)
+  const idle = WireFixture.render(agents, [], 84, rows)
+  const back = agents.reduce((a, b) => ((idle.positions.get(b.id)?.y ?? 0) < (idle.positions.get(a.id)?.y ?? 0) ? b : a))
+  const seat = idle.positions.get(back.id) ?? { x: 0, y: 0 }
 
   // Act
-  const early = draw(100)
-  const leaving = draw(450)
-  const arriving = draw(820)
-  const gone = draw(950)
+  const lit = WireFixture.render(agents, WireFixture.tools([back], WireFixture.ACTIVE_MS), 84, rows)
 
   // Assert
-  expect(CableFixture.lit(early, () => true)).toBe(0)
-  expect(CableFixture.lit(gone, () => true)).toBe(0)
-  expect(CableFixture.lit(leaving, x => x > 26)).toBeGreaterThan(0)
-  expect(CableFixture.lit(leaving, x => x < 14)).toBe(0)
-  expect(CableFixture.lit(arriving, x => x < 14)).toBeGreaterThan(0)
-  expect(CableFixture.lit(arriving, x => x > 26)).toBe(0)
+  const changed = WireFixture.changed(idle.data, lit.data, 84)
+  const climb = WireFixture.outside(changed, lit.boxes).filter(c => c.y > seat.y + Colleagues.HEIGHT / 2 && c.y <= WireFixture.floor(rows))
+  expect(climb.length).toBeGreaterThan(0)
 })
 
-test('dissolve breaks the cable into particles drifting away and fading over the finale', async () => {
+test('graph lights the cable after a tool call', async () => {
   // Arrange
-  const cable = CableFixture.straight()
-  const draw = (t: number): Uint8Array => {
-    const canvas = CableFixture.canvas()
-    Scene.dissolve(canvas, cable, t, SceneFixture.NOW)
-    return CableFixture.pixels(canvas)
-  }
+  const agents = WireFixture.agents(2)
+  const rows = Scene.graphRows(84, 70)
+  const idle = WireFixture.render(agents, [], 84, rows)
 
   // Act
-  const start = draw(0.05)
-  const middle = draw(0.6)
-  const end = draw(1)
+  const lit = WireFixture.render(agents, WireFixture.tools(agents, WireFixture.ACTIVE_MS), 84, rows)
 
   // Assert
-  expect(CableFixture.lit(start, (_, y) => y > 9 && y < 11)).toBeGreaterThan(0)
-  expect(CableFixture.lit(middle, (_, y) => y < 8)).toBeGreaterThan(0)
-  expect(CableFixture.lit(middle, (_, y) => y < 8)).toBeGreaterThan(CableFixture.lit(start, (_, y) => y < 8))
-  expect(CableFixture.lit(end, () => true)).toBe(0)
+  const changed = WireFixture.changed(idle.data, lit.data, 84)
+  const lanes = WireFixture.outside(changed, lit.boxes).filter(c => c.y >= WireFixture.floor(rows) + 3)
+  expect(lanes.length).toBeGreaterThan(0)
+})
+
+test('graph wires a child agent to its parent colleague', async () => {
+  // Arrange
+  const parent = SceneFixture.agent('parent', 'planner', '', 100)
+  const child = { ...SceneFixture.agent('child', 'worker', '', 99), parentId: 'parent' }
+  const rows = Scene.graphRows(84, 70)
+
+  // Act
+  const routes = WireFixture.routes([parent, child], [], 84, rows)
+
+  // Assert
+  const links = routes.filter(r => r.from.socket.y <= WireFixture.floor(rows))
+  expect(routes).toHaveLength(2)
+  expect(links).toHaveLength(1)
+})
+
+test('graph never lets two cables share a floor cell on a short canvas', async () => {
+  // Arrange
+  const agents = WireFixture.agents(10)
+  const rows = 22
+  const floor = WireFixture.floor(rows)
+
+  // Act
+  const routes = WireFixture.routes(agents, [], 250, rows)
+
+  // Assert
+  const seen = new Set<string>()
+  let shared = 0
+  for (const route of routes) {
+    const own = new Set(route.wire.cells.filter(c => c.y > floor).map(c => `${c.x},${c.y}`))
+    for (const key of own) {
+      if (seen.has(key)) shared++
+      seen.add(key)
+    }
+  }
+  expect(routes).toHaveLength(10)
+  expect(seen.size).toBeGreaterThan(0)
+  expect(shared).toBe(0)
+})
+
+test('graph renders the narrow fallback row without throwing', async () => {
+  // Arrange
+  const agents = WireFixture.agents(4)
+  const rows = Scene.graphRows(24, 40)
+
+  // Act
+  const render = (): { data: Uint8Array } => WireFixture.render(agents, WireFixture.tools(agents, WireFixture.ACTIVE_MS), 24, rows)
+
+  // Assert
+  expect(render).not.toThrow()
+  expect(render().data.length).toBe(24 * Canvas.HD_CELL_WIDTH * rows * Canvas.HD_CELL_HEIGHT * 4)
 })
 
 test('graph seats colleagues at the same size on Halloween as on a plain day', async () => {
@@ -774,4 +837,251 @@ test('seats never put two colleagues on top of each other', () => {
       expect(Math.abs(a.point.x - b.point.x)).toBeGreaterThanOrEqual(width)
     }
   }
+})
+
+class StageFixture {
+  static readonly DATE = new Date(2026, 5, 1, 12, 0)
+  static readonly CABLE_SIZES: [number, number, number][] = [[60, 22, 3], [24, 22, 3], [40, 28, 4], [84, 22, 8], [120, 30, 10]]
+
+  static agents(count: number): FlowAgent[] {
+    return Array.from({ length: count }, (_, i) => SceneFixture.agent(`a${i}`, `type-${i}`, '', 100 - i))
+  }
+
+  static graph(agents: FlowAgent[], columns: number, rows: number): GraphResult & { wires?: Wire[] } {
+    const input: SceneInput = { ...SceneFixture.input(agents, SceneFixture.NOW, 10, 0, false, 0, new Map()), isLive: false, columns, rows, ambience: Effects.ambience(StageFixture.DATE, false, 0, false, []) }
+    return Scene.graph(input)
+  }
+
+  static agentLabels(result: GraphResult): GraphLabel[] {
+    return result.labels.filter(l => !/^\+\d+$/.test(l.text))
+  }
+
+  static avatar(result: GraphResult): Obstacle {
+    return (result.obstacles ?? [])[StageFixture.agentLabels(result).length] ?? { x: 0, y: 0, w: 0, h: 0 }
+  }
+
+  static colleagues(result: GraphResult): Obstacle[] {
+    return (result.obstacles ?? []).slice(StageFixture.agentLabels(result).length + 1)
+  }
+
+  static overlaps(label: GraphLabel, box: Obstacle): boolean {
+    const end = label.column + Array.from(label.text).length
+    return label.column < box.x + box.w && end > box.x && label.row * 2 < box.y + box.h && label.row * 2 + 2 > box.y
+  }
+
+  static ended(agent: FlowAgent): FlowAgent {
+    return { ...agent, status: 'done', endedAt: SceneFixture.NOW - 600_000 }
+  }
+}
+
+for (const [columns, rows, count] of StageFixture.CABLE_SIZES) {
+  test(`graph never lets two cables share a floor cell with ${count} agents at ${columns}x${rows}`, async () => {
+    // Arrange
+    const agents = StageFixture.agents(count)
+
+    // Act
+    const wires = StageFixture.graph(agents, columns, rows).wires ?? []
+
+    // Assert
+    const floor = WireFixture.floor(rows)
+    const seen = new Set<string>()
+    let shared = 0
+    for (const wire of wires) {
+      const own = new Set(wire.cells.filter(c => c.y > floor).map(c => `${c.x},${c.y}`))
+      for (const key of own) {
+        if (seen.has(key)) shared++
+        seen.add(key)
+      }
+    }
+    expect(wires).toHaveLength(count)
+    expect(shared).toBe(0)
+  })
+}
+
+for (const columns of [60, 84, 120]) {
+  test(`graph keeps every agent label off the avatar box with 6 agents at ${columns}x22`, async () => {
+    // Arrange
+    const agents = StageFixture.agents(6)
+
+    // Act
+    const result = StageFixture.graph(agents, columns, 22)
+
+    // Assert
+    const avatar = StageFixture.avatar(result)
+    const clash = StageFixture.agentLabels(result).filter(l => StageFixture.overlaps(l, avatar))
+    expect(avatar.w).toBeGreaterThan(0)
+    expect(clash.map(l => l.text)).toEqual([])
+  })
+}
+
+test('graph keeps the seat of a colleague when an earlier agent leaves the stage', async () => {
+  // Arrange
+  const agents = StageFixture.agents(3)
+  const before = StageFixture.colleagues(StageFixture.graph(agents, 84, 30))
+
+  // Act
+  const after = StageFixture.colleagues(StageFixture.graph([StageFixture.ended(agents[0] as FlowAgent), ...agents.slice(1)], 84, 30))
+
+  // Assert
+  expect(before).toHaveLength(3)
+  expect(after).toHaveLength(2)
+  expect(after.map(b => b.x)).toEqual([before[1]?.x, before[2]?.x])
+})
+
+test('graph keeps the colleagues clear of the main desk on a narrow canvas with 8 agents', async () => {
+  // Arrange
+  const agents = StageFixture.agents(8)
+
+  // Act
+  const result = StageFixture.graph(agents, 24, 22)
+
+  // Assert
+  const avatar = StageFixture.avatar(result)
+  const room = Office.room(new Canvas(24, 22, 'quad'), 12, avatar.y + avatar.h, avatar.w / 2)
+  const front = StageFixture.colleagues(result).filter(b => b.y + b.h >= room.floorY)
+  const clash = front.filter(b => b.x < room.deskRight && b.x + b.w > room.deskLeft)
+  expect(front.length).toBeGreaterThan(0)
+  expect(clash).toEqual([])
+})
+
+test('graph keeps the overflow badge off every colleague on a narrow canvas with 8 agents', async () => {
+  // Arrange
+  const agents = StageFixture.agents(8)
+
+  // Act
+  const result = StageFixture.graph(agents, 24, 22)
+
+  // Assert
+  const badge = result.labels.find(l => /^\+\d+$/.test(l.text))
+  const clash = StageFixture.colleagues(result).filter(b => badge !== undefined && StageFixture.overlaps(badge, b))
+  expect(badge).toBeDefined()
+  expect(clash).toEqual([])
+})
+
+type Shot = { data: Uint8Array; width: number; pane: Pane; avatar: Obstacle }
+
+class WindowFixture {
+  static readonly COLUMNS = 84
+  static readonly ROWS = 36
+  static readonly PX = 6
+
+  static ambience(date: Date, celebrations: Celebration[] = []): Ambience {
+    return Effects.ambience(date, false, 0, false, celebrations)
+  }
+
+  static failure(): FlowEvent[] {
+    return [{ id: 1, at: SceneFixture.NOW - 60_000, agentId: '', kind: 'verif', label: 'build failed (12 s)', isError: true }]
+  }
+
+  static shot(ambience: Ambience, events: FlowEvent[] = []): Shot {
+    const base = SceneFixture.input([], SceneFixture.NOW, 10, 0, true, 0, new Map())
+    const result = Scene.graph({ ...base, events, columns: WindowFixture.COLUMNS, rows: WindowFixture.ROWS, mode: 'hd', ambience })
+    const encoded = result.encoded
+    if (encoded.kind !== 'rgba') throw new Error('expected rgba')
+    const canvas = new Canvas(WindowFixture.COLUMNS, WindowFixture.ROWS, 'hd')
+    const avatar = result.obstacles?.[result.labels.length] ?? { x: 0, y: 0, w: 0, h: 0 }
+    const room = Office.room(canvas, canvas.width / 2, avatar.y + avatar.h, avatar.w / 2)
+    return { data: Uint8Array.from(atob(encoded.rgba), ch => ch.charCodeAt(0)), width: encoded.width, pane: Office.pane(canvas, room), avatar }
+  }
+
+  static withoutOutdoor(ambience: Ambience): Shot {
+    const original = Effects.outdoor
+    Effects.outdoor = (): void => undefined
+    try {
+      return WindowFixture.shot(ambience)
+    } finally {
+      Effects.outdoor = original
+    }
+  }
+
+  static changed(before: Shot, after: Shot): Point[] {
+    const points: Point[] = []
+    for (let i = 0; i < before.data.length; i += 4) {
+      if (before.data[i] === after.data[i] && before.data[i + 1] === after.data[i + 1] && before.data[i + 2] === after.data[i + 2]) continue
+      const index = i / 4
+      points.push({ x: (index % before.width) / WindowFixture.PX, y: Math.floor(index / before.width) / WindowFixture.PX })
+    }
+    return points
+  }
+
+  static inside(point: Point, pane: Pane): boolean {
+    return point.x >= pane.left - 0.2 && point.x <= pane.right + 0.2 && point.y >= pane.top - 0.2 && point.y <= pane.bottom + 0.2
+  }
+
+  static face(avatar: Obstacle): Obstacle {
+    return { x: avatar.x + avatar.w * 0.35, y: avatar.y + avatar.h * 0.15, w: avatar.w * 0.3, h: avatar.h * 0.2 }
+  }
+
+  static within(point: Point, box: Obstacle): boolean {
+    return point.x >= box.x && point.x < box.x + box.w && point.y >= box.y && point.y < box.y + box.h
+  }
+
+  static brightness(shot: Shot, pane: Pane): number {
+    let sum = 0
+    let count = 0
+    for (let y = Math.ceil(pane.top * WindowFixture.PX); y < Math.floor(pane.bottom * WindowFixture.PX); y++) {
+      for (let x = Math.ceil(pane.left * WindowFixture.PX); x < Math.floor(pane.right * WindowFixture.PX); x++) {
+        const i = (y * shot.width + x) * 4
+        sum += (shot.data[i] ?? 0) + (shot.data[i + 1] ?? 0) + (shot.data[i + 2] ?? 0)
+        count++
+      }
+    }
+    return sum / count
+  }
+}
+
+test('outdoor effects never paint outside the pane', async () => {
+  // Arrange
+  const celebration: Celebration[] = [{ kind: 'fireworks', at: SceneFixture.NOW - 1500 }]
+  const ambiences = [
+    WindowFixture.ambience(new Date(2026, 9, 15, 12, 0)),
+    WindowFixture.ambience(new Date(2026, 11, 24, 12, 0)),
+    WindowFixture.ambience(new Date(2026, 1, 14, 12, 0)),
+    WindowFixture.ambience(new Date(2026, 5, 1, 12, 0), celebration),
+  ]
+
+  for (const ambience of ambiences) {
+    // Act
+    const full = WindowFixture.shot(ambience)
+    const bare = WindowFixture.withoutOutdoor(ambience)
+    const changed = WindowFixture.changed(bare, full)
+
+    // Assert
+    expect(changed.length).toBeGreaterThan(0)
+    expect(changed.filter(p => !WindowFixture.inside(p, full.pane))).toEqual([])
+  }
+})
+
+test('nothing crosses the avatar face on a rainy, autumn or celebration render', async () => {
+  // Arrange
+  const june = new Date(2026, 5, 1, 12, 0)
+  const cases: [Shot, Shot][] = [
+    [WindowFixture.shot(WindowFixture.ambience(june), WindowFixture.failure()), WindowFixture.shot(WindowFixture.ambience(june))],
+    [WindowFixture.shot(WindowFixture.ambience(new Date(2026, 9, 15, 12, 0))), WindowFixture.shot(WindowFixture.ambience(june))],
+    [WindowFixture.shot(WindowFixture.ambience(june, [{ kind: 'fireworks', at: SceneFixture.NOW - 1500 }])), WindowFixture.shot(WindowFixture.ambience(june))],
+  ]
+
+  for (const [busy, plain] of cases) {
+    // Act
+    const face = WindowFixture.face(plain.avatar)
+    const crossed = WindowFixture.changed(plain, busy).filter(p => WindowFixture.within(p, face))
+
+    // Assert
+    expect(face.y).toBeLessThan(plain.pane.bottom)
+    expect(WindowFixture.changed(plain, busy).length).toBeGreaterThan(0)
+    expect(crossed).toEqual([])
+  }
+})
+
+test('the day sky is brighter than the night sky inside the pane', async () => {
+  // Arrange
+  const day = WindowFixture.shot(WindowFixture.ambience(new Date(2026, 5, 1, 12, 30)))
+  const night = WindowFixture.shot(WindowFixture.ambience(new Date(2026, 5, 1, 23, 30)))
+
+  // Act
+  const bright = WindowFixture.brightness(day, day.pane)
+  const dark = WindowFixture.brightness(night, night.pane)
+
+  // Assert
+  expect(bright).toBeGreaterThan(dark + 60)
 })

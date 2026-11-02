@@ -190,3 +190,50 @@ test('ignores an invalid regular expression from a manifest instead of throwing'
   expect(Project.matches('([', 'anything')).toBe(false)
   expect(Project.matches('', 'anything')).toBe(false)
 })
+
+class VerifFixture {
+  static snapshot() {
+    const manifest = Project.parse({
+      version: 1,
+      name: 'plugin',
+      verification: [
+        { step: 'lint', label: 'Validate', patterns: ['\\bclaude\\s+plugin\\s+validate\\b'] },
+        { step: 'unit', label: 'Tests', patterns: ['\\bclaude\\s+plugin\\s+test\\b'] },
+      ],
+    })
+    return Project.resolve(manifest, [], [], true)
+  }
+}
+
+test('a commit message that quotes a verification command starts no step', () => {
+  // Arrange
+  const snapshot = VerifFixture.snapshot()
+
+  // Act
+  const steps = Project.verifSteps(snapshot, 'git commit -m "Run claude plugin test in CI"')
+
+  // Assert
+  expect(steps).toEqual([])
+})
+
+test('a grep pattern that quotes a verification command starts no step', () => {
+  // Arrange
+  const snapshot = VerifFixture.snapshot()
+
+  // Act
+  const steps = Project.verifSteps(snapshot, 'grep "claude plugin validate" README.md')
+
+  // Assert
+  expect(steps).toEqual([])
+})
+
+test('the default manifest maps npm run test:e2e to the e2e step', () => {
+  // Arrange
+  const snapshot = Project.resolve(undefined, [], [], true)
+
+  // Act
+  const steps = Project.verifSteps(snapshot, 'npm run test:e2e')
+
+  // Assert
+  expect(steps).toEqual(['e2e'])
+})
