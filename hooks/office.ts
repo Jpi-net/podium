@@ -1,8 +1,12 @@
-import { Canvas, type Rgb } from './canvas'
+import { Canvas, type Point, type Rgb } from './canvas'
+import type { Pane } from './effects'
 
 export type Room = { floorY: number; sillY: number; deskY: number; deskLeft: number; deskRight: number; spare: number }
 
 export class Office {
+  static readonly SWITCH_WIDTH = 10
+  private static readonly SIDE_MIN = 8.5
+  private static readonly LED_OFF: Rgb = [48, 54, 74]
   private static readonly WALL: Rgb = [36, 44, 70]
   private static readonly WALL_LIGHT: Rgb = [48, 58, 90]
   private static readonly WALL_DARK: Rgb = [24, 30, 50]
@@ -56,8 +60,42 @@ export class Office {
     const floorY = Math.round(h - Math.max(5, h * 0.12))
     const deskY = Math.round(Math.min(bustBottom - 1, floorY - 9))
     const sillY = Math.round(Math.min(deskY + 3, floorY - 8))
-    const halfDesk = Math.round((bustHalfWidth + 7.5) * 2) / 2
+    const halfDesk = Math.round(Math.min(bustHalfWidth + 7.5, Math.max(bustHalfWidth + 1, canvas.width / 2 - Office.SIDE_MIN)) * 2) / 2
     return { floorY, sillY, deskY, deskLeft: Math.round((cx - halfDesk) * 2) / 2, deskRight: Math.round((cx + halfDesk) * 2) / 2, spare: halfDesk - bustHalfWidth }
+  }
+
+  static pane(canvas: Canvas, room: Room): Pane {
+    const reach = Office.curtainWidth(canvas)
+    return { left: reach + 0.5, right: canvas.width - reach - 0.5, top: 3, bottom: Math.max(4, room.sillY - 2) }
+  }
+
+  static port(room: Room, index: number, count: number): Point {
+    const mid = (room.deskLeft + room.deskRight) / 2
+    return { x: Math.round((mid - Office.SWITCH_WIDTH / 2 + ((index + 0.5) * Office.SWITCH_WIDTH) / Math.max(1, count)) * 2) / 2, y: room.floorY + 2 }
+  }
+
+  static hub(canvas: Canvas, room: Room, light: number, count: number, frame: number): void {
+    const tone = (c: Rgb): Rgb => Canvas.scale(c, light)
+    const { floorY, deskY } = room
+    const mid = (room.deskLeft + room.deskRight) / 2
+    const left = Math.round((mid - Office.SWITCH_WIDTH / 2) * 2) / 2
+    const top = deskY + 8
+    const length = floorY - top
+    if (length >= 3) {
+      canvas.block(mid - 0.5, top, 1, length, tone(Canvas.scale(Office.ACCENT, 0.45)))
+      canvas.block(mid, top, 0.5, length, tone(Office.SHADE), 0.6)
+      const spark = top + Math.floor((((frame * 0.35) % length) + length) % length)
+      canvas.block(mid - 0.5, spark, 1, 1, tone(Canvas.mix(Office.ACCENT, [255, 255, 255], 0.5)))
+    }
+    canvas.block(left, floorY + 1, Office.SWITCH_WIDTH, 1, tone(Office.METAL_LIGHT))
+    canvas.block(left, floorY + 2, Office.SWITCH_WIDTH, 1, tone(Office.METAL_DARK))
+    canvas.block(left, floorY + 2, 0.5, 1, tone(Office.METAL))
+    canvas.block(left + Office.SWITCH_WIDTH - 0.5, floorY + 2, 0.5, 1, tone(Office.METAL))
+    canvas.block(mid - 0.5, floorY, 1, 1, tone(Canvas.scale(Office.ACCENT, 0.45)))
+    for (let i = 0; i < count; i++) {
+      const port = Office.port(room, i, count)
+      canvas.block(port.x, port.y, 0.5, 1, tone(Office.LED_OFF))
+    }
   }
 
   static back(canvas: Canvas, room: Room, light: number, frame: number, taken: readonly (readonly [number, number])[] = []): void {
@@ -77,6 +115,7 @@ export class Office {
     canvas.block(0, sillY + 2, w, 0, tone(Office.SILL_SHADOW))
     Office.floor(canvas, room, tone)
     Office.rug(canvas, room, tone)
+    Office.frame(canvas, room, tone)
     Office.curtain(canvas, 0, sillY + 1, false, tone, frame)
     Office.curtain(canvas, w, sillY + 1, true, tone, frame)
     canvas.block(0, 0, w, 1, tone(Office.BRASS))
@@ -86,7 +125,7 @@ export class Office {
     const plantX = Math.max(7, w * 0.11)
     const cabinetX = Math.min(w - 8, w * 0.89)
     if (isFree(plantX - 5, plantX + 5)) Office.plant(canvas, plantX, floorY, tone, frame)
-    if (isFree(cabinetX - 5, cabinetX + 5)) Office.cabinet(canvas, cabinetX, floorY, tone)
+    if (cabinetX - 4.5 >= 0 && cabinetX + 4.5 <= w && isFree(cabinetX - 5, cabinetX + 5)) Office.cabinet(canvas, cabinetX, floorY, tone)
   }
 
   static desk(canvas: Canvas, room: Room, light: number, isLampOn: boolean, frame: number): void {
@@ -140,8 +179,25 @@ export class Office {
     }
   }
 
+  private static curtainWidth(canvas: Canvas): number {
+    return Math.max(4, Math.min(7, canvas.width * 0.06))
+  }
+
+  private static frame(canvas: Canvas, room: Room, tone: (c: Rgb) => Rgb): void {
+    const pane = Office.pane(canvas, room)
+    const height = pane.bottom - pane.top
+    if (height <= 0 || pane.right <= pane.left) return
+    const mid = canvas.width / 2
+    canvas.block(pane.left - 0.5, pane.top - 1, pane.right - pane.left + 1, 1, tone(Office.RAIL_LIGHT))
+    canvas.block(pane.left - 0.5, pane.bottom, pane.right - pane.left + 1, 1, tone(Office.RAIL))
+    canvas.block(pane.left - 0.5, pane.top, 0.5, height, tone(Office.RAIL))
+    canvas.block(pane.right, pane.top, 0.5, height, tone(Office.RAIL))
+    canvas.block(mid - 0.5, pane.top, 1, height, tone(Office.RAIL))
+    canvas.block(mid - 0.5, pane.top, 0.5, height, tone(Office.RAIL_LIGHT))
+  }
+
   private static curtain(canvas: Canvas, edge: number, bottom: number, isRight: boolean, tone: (c: Rgb) => Rgb, frame: number): void {
-    const width = Math.max(4, Math.min(7, canvas.width * 0.06))
+    const width = Office.curtainWidth(canvas)
     const tie = Math.round(bottom * 0.62)
     for (let y = 0; y < bottom; y++) {
       const pinch = y < tie ? 1 - (y / tie) * 0.45 : 0.55 + ((y - tie) / Math.max(1, bottom - tie)) * 0.45

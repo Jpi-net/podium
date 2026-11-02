@@ -6,6 +6,7 @@ import { Effects, type Ambience, type ExitStatus, type Obstacle, type Sky } from
 import { WeatherFx } from './weather'
 import { Robots, type OrchestratorReaction, type OrchestratorState, type RobotMood } from './robots'
 import { Theme } from './theme'
+import { Wiring, type Plug, type Side, type Wire, type WireLook } from './wiring'
 
 export type ToolKind = 'read' | 'edit' | 'shell' | 'search' | 'agent' | 'web' | 'other'
 
@@ -29,7 +30,7 @@ export type LaneInput = SceneInput & { from: number; to: number }
 
 export type GraphLabel = { agentId: string; column: number; row: number; text: string; color: Rgb; isPrimary: boolean; isMain: boolean }
 
-export type GraphResult = { encoded: Encoded; labels: GraphLabel[]; obstacles?: Obstacle[] }
+export type GraphResult = { encoded: Encoded; labels: GraphLabel[]; obstacles?: Obstacle[]; wires?: Wire[] }
 
 export type VerifPulse = { t: number; color: Rgb }
 
@@ -40,6 +41,8 @@ type LabelAlign = 'center' | 'start' | 'end'
 type Seat = { point: Point; isBack: boolean; align: LabelAlign; anchor: number; room: number }
 
 type Seats = { seats: Seat[]; scale: number; pitch: number }
+
+type Fit = { scale: number; pitch: number; perLeft: number; perRight: number; gap: number; margin: number }
 
 type Placed = {
   agent: FlowAgent
@@ -61,7 +64,9 @@ type Placed = {
   labelAnchor: number
 }
 
-export type Cable = { points: Point[]; length: number; head: Rgb; tail: Rgb; seed: number }
+type Cabled = { items: Cabling[]; ports: number }
+
+type Cabling = { p: Placed; look: WireLook; wire: Wire }
 
 type Flight = { point: Point; velocity: Point; scale: number; progress: number }
 
@@ -71,6 +76,8 @@ export class Scene {
   private static readonly SEAT_MAX = 1
   private static readonly SEAT_GAP = 1
   private static readonly SCALE_STEP = 0.025
+  private static readonly NARROW_MIN = 0.4
+  private static readonly NARROW_GAP = 0.5
   private static readonly EDGE_MARGIN = 2
   static readonly TOOL_COLORS: Record<ToolKind, Rgb> = {
     read: [120, 170, 255],
@@ -96,11 +103,12 @@ export class Scene {
   private static readonly LAND_MS = 480
   private static readonly FLASH_MS = 650
   private static readonly SPARK_MS = 700
-  private static readonly RETURN_FROM_MS = 350
-  private static readonly RETURN_TO_MS = 900
+  private static readonly WIRES = new Map<string, { key: string; wire: Wire }>()
+  private static wiresSize = ''
+  private static readonly SEATING = new Map<string, number>()
+  private static seatingKey = ''
   private static readonly IDLE_MS = 15_000
   private static readonly ACTIVITY_MS = 10_000
-  private static readonly CABLE_STEP = 0.5
   private static readonly SHADOW: Rgb = [4, 8, 20]
   private static readonly MAX_SHOWN = 10
   static readonly SLEEP_AFTER_MS = 60_000
@@ -222,33 +230,31 @@ export class Scene {
     const ordinals = Scene.ordinals(placed)
     const labels = Scene.labels(canvas, center, orchestratorScale, placed, state, input, ordinals)
     const obstacles = Scene.obstacles(canvas, center, orchestratorScale, placed, labels, input)
-    Effects.background(canvas, input.frame, input.at, input.ambience, obstacles)
+    const pane = Office.pane(canvas, room)
+    const weather = WeatherFx.weather(input.events, input.at)
+    const orchestratorTop = Robots.orchestratorTop(center.y, orchestratorScale)
+    canvas.clip(pane)
+    Effects.outdoor(canvas, input.frame, input.at, input.ambience, obstacles, pane)
+    WeatherFx.glass(canvas, pane, input.frame, weather)
+    if (weather.clearing >= 0) WeatherFx.rainbow(canvas, center.x, orchestratorTop - 4, weather.clearing, pane)
+    canvas.clip()
     const light = Effects.light(input.ambience.timeOfDay)
     const taken = placed.filter(p => !p.isAbove && p.exit < 1).map((p): [number, number] => [p.slot.x - (Colleagues.WIDTH * p.baseScale) / 2, p.slot.x + (Colleagues.WIDTH * p.baseScale) / 2])
     Office.back(canvas, room, light, input.frame, taken)
+    Effects.sill(canvas, input.frame, input.ambience, pane, room)
+    Effects.indoor(canvas, input.frame, input.at, input.ambience, room, pane)
 
-    for (const p of placed) Scene.shadow(canvas, center, p)
-    const activity = Scene.activity(input.events, input.at)
-    for (const p of placed) {
-      const parent = placed.find(o => o.agent.id === p.agent.parentId && o.exit === 0)
-      Scene.edge(canvas, center, parent, p, input, activity.get(p.agent.id) ?? 0)
-    }
-
+    const hub = Office.port(room, 0, 1)
+    for (const p of placed) Scene.shadow(canvas, hub, p)
     const active = new Map<string, Point>()
     for (const p of placed) if (p.exit === 0) active.set(p.agent.id, { x: p.x, y: p.y })
     const gaze = Scene.gaze(input.events, input.at, active)
-    const weather = WeatherFx.weather(input.events, input.at)
-    const isSheltered = weather.isRaining || weather.clearing >= 0
-    const top = Robots.orchestratorTop(center.y, orchestratorScale)
+    Effects.confetti(canvas, input.frame, input.at, input.ambience)
+    const top = orchestratorTop
     const half = Scene.orchestratorHalf(canvas)
-    if (weather.isRaining) WeatherFx.rain(canvas, center, half, input.frame, { left: center.x - 9, right: center.x + 13, top: top - 12 })
-    Robots.drawOrchestrator(canvas, center.x, center.y, orchestratorScale, input.frame, state, Scene.reaction(input.agents, input.at), gaze, isSheltered || Effects.hatHeight(input.ambience, 10) > 0)
+    Robots.drawOrchestrator(canvas, center.x, center.y, orchestratorScale, input.frame, state, Scene.reaction(input.agents, input.at), gaze, Effects.hatHeight(input.ambience, 10) > 0)
     const hatWidth = Scene.orchestratorHatWidth(orchestratorScale)
-    if (isSheltered) {
-      const open = weather.isRaining ? 1 : 1 - Math.min(1, weather.clearing * 2.5)
-      if (open > 0) WeatherFx.umbrella(canvas, center.x, top, open, input.frame)
-      if (weather.clearing >= 0) WeatherFx.rainbow(canvas, center.x, top - 4, weather.clearing)
-    } else Effects.hat(canvas, center.x, top, hatWidth, input.ambience, input.frame, 0.5)
+    Effects.hat(canvas, center.x, top, hatWidth, input.ambience, input.frame, 0.5)
     const pulse = Scene.verifPulse(input.events, input.at)
     if (pulse) Scene.shockwave(canvas, center, half, pulse)
     Office.desk(canvas, room, light, light < 0.7, input.frame)
@@ -257,14 +263,24 @@ export class Scene {
       Effects.sleeping(canvas, center.x + half * 0.45, top + 1, input.frame)
     }
 
-    for (const p of placed) Scene.robot(canvas, center, p, input, ordinals.get(p.agent.id) ?? 0)
+    const cabled = Scene.cables(canvas, room, placed, input, light)
+    Office.hub(canvas, room, light, cabled.ports, input.frame)
+    const cables = cabled.items
+    for (const isBack of [true, false]) {
+      const group = cables.filter(c => c.p.isAbove === isBack)
+      for (const c of group) {
+        Wiring.draw(canvas, c.wire, c.look, 'head')
+        Wiring.draw(canvas, c.wire, c.look, 'hang')
+      }
+      for (const p of placed) if (p.isAbove === isBack) Scene.robot(canvas, hub, p, input, ordinals.get(p.agent.id) ?? 0)
+      for (const c of group) {
+        Wiring.draw(canvas, c.wire, c.look, 'tail')
+      }
+    }
     const crown = top - Effects.hatHeight(input.ambience, hatWidth / 0.7)
     Scene.bubbles(canvas, center, placed, crown, orchestratorScale, input)
     const hidden = Math.max(0, Scene.visibleAt(input.agents, input.at).filter(a => Scene.isOnStage(a, input.at)).length - placed.length)
     const overflow = hidden > 0 ? Scene.overflow(canvas, center, orchestratorScale, hidden, input) : undefined
-
-    Effects.celebrate(canvas, center, input.at, input.frame, input.ambience)
-    Effects.foreground(canvas, input.frame, input.at, input.ambience)
 
     if (!input.isLive) {
       const tag = ` ⏵ REPLAY ${Theme.clock(input.at)} `
@@ -276,7 +292,7 @@ export class Scene {
       Scene.centered(canvas, center.x, row, 'Waiting for agents…', Theme.MUTED)
     }
     if (overflow) labels.push(overflow)
-    return { encoded: canvas.encode(), labels, obstacles }
+    return { encoded: canvas.encode(), labels, obstacles, wires: cables.map(c => c.wire) }
   }
 
   static lanes(input: LaneInput): Encoded {
@@ -430,9 +446,10 @@ export class Scene {
     for (const id of Array.from(input.positions.keys())) if (!ids.has(id)) input.positions.delete(id)
     if (chosen.length === 0) return []
     const baseScale = plan.scale
+    const assigned = Scene.assign(canvas, plan, chosen)
 
     return chosen.map((agent, i) => {
-      const seat: Seat = plan.seats[i] ?? plan.seats[0] ?? { point: center, isBack: false, align: 'center', anchor: center.x, room: Scene.LABEL_MAX }
+      const seat: Seat = plan.seats[assigned.get(agent.id) ?? i] ?? plan.seats[0] ?? { point: center, isBack: false, align: 'center', anchor: center.x, room: Scene.LABEL_MAX }
       const slot = seat.point
       const status = Scene.statusAt(agent, input.at)
       const seed = Canvas.hash(Scene.stableHash(agent.id), 29)
@@ -469,23 +486,34 @@ export class Scene {
     })
   }
 
-  static seats(canvas: Canvas, room: Room, n: number): Seats {
-    const margin = Scene.EDGE_MARGIN
-    const left = Math.max(0, room.deskLeft - Scene.SEAT_GAP - margin)
-    const right = Math.max(0, canvas.width - margin - room.deskRight - Scene.SEAT_GAP)
-    let scale = Scene.SEAT_MAX
-    let pitch = Colleagues.WIDTH * scale + Scene.SEAT_GAP
-    let perLeft = 0
-    let perRight = 0
-    const steps = Math.round((Scene.SEAT_MAX - Scene.SEAT_MIN) / (Scene.SCALE_STEP * 2))
-    for (let k = 0; k <= steps; k++) {
-      const s = Math.round((Scene.SEAT_MAX - k * Scene.SCALE_STEP * 2) * 1000) / 1000
-      scale = s
-      pitch = Colleagues.WIDTH * s + Scene.SEAT_GAP
-      perLeft = Math.floor((left + Scene.SEAT_GAP) / pitch)
-      perRight = Math.floor((right + Scene.SEAT_GAP) / pitch)
-      if (2 * (perLeft + perRight) >= n) break
+  private static assign(canvas: Canvas, plan: Seats, chosen: FlowAgent[]): Map<string, number> {
+    const key = `${canvas.width}x${canvas.height}|${plan.seats.length}|${plan.scale}`
+    if (key !== Scene.seatingKey) {
+      Scene.SEATING.clear()
+      Scene.seatingKey = key
     }
+    const ids = new Set(chosen.map(a => a.id))
+    for (const id of Array.from(Scene.SEATING.keys())) if (!ids.has(id)) Scene.SEATING.delete(id)
+    const used = new Set<number>()
+    for (const agent of chosen) {
+      const index = Scene.SEATING.get(agent.id)
+      if (index === undefined || index >= plan.seats.length || used.has(index)) Scene.SEATING.delete(agent.id)
+      else used.add(index)
+    }
+    let next = 0
+    for (const agent of chosen) {
+      if (Scene.SEATING.has(agent.id)) continue
+      while (used.has(next)) next++
+      used.add(next)
+      Scene.SEATING.set(agent.id, next)
+    }
+    return Scene.SEATING
+  }
+
+  static seats(canvas: Canvas, room: Room, n: number): Seats {
+    const wide = Scene.fit(canvas, room, n, Scene.EDGE_MARGIN, Scene.SEAT_GAP, Scene.SEAT_MIN)
+    const fit = wide.perLeft + wide.perRight > 0 ? wide : Scene.fit(canvas, room, n, 0, Scene.NARROW_GAP, Scene.NARROW_MIN)
+    const { scale, pitch, perLeft, perRight, gap, margin } = fit.perLeft + fit.perRight > 0 ? fit : wide
     const half = (Colleagues.HEIGHT * scale) / 2
     const width = Colleagues.WIDTH * scale
     const rows = [
@@ -494,7 +522,7 @@ export class Scene {
     ]
     const seats: Seat[] = []
     if (perLeft + perRight === 0) {
-      const per = Math.max(1, Math.floor((canvas.width - 2 * margin + Scene.SEAT_GAP) / pitch))
+      const per = Math.max(1, Math.floor((canvas.width - 2 * margin + gap) / pitch))
       for (let k = 0; k < per; k++) {
         const x = margin + width / 2 + k * pitch
         seats.push({ point: { x, y: rows[0]?.y ?? 0 }, isBack: false, align: 'center', anchor: x, room: Math.floor(pitch) - 1 })
@@ -506,18 +534,32 @@ export class Scene {
         const inner = k === 0
         const middle = canvas.width / 2
         if (k < perLeft) {
-          const x = room.deskLeft - Scene.SEAT_GAP - k * pitch - width / 2
+          const x = room.deskLeft - gap - k * pitch - width / 2
           const edge = x - width / 2
-          seats.push({ point: { x, y: row.y }, isBack: row.isBack, align: inner ? 'start' : 'center', anchor: inner ? edge : x, room: inner ? Math.floor(middle - edge) - 1 : Math.floor(pitch) - 1 })
+          seats.push({ point: { x, y: row.y }, isBack: row.isBack, align: inner ? 'start' : 'center', anchor: inner ? edge : x, room: Math.max(0, inner ? Math.floor(middle - edge) - 1 : Math.floor(pitch) - 1) })
         }
         if (k < perRight) {
-          const x = room.deskRight + Scene.SEAT_GAP + k * pitch + width / 2
+          const x = room.deskRight + gap + k * pitch + width / 2
           const edge = x + width / 2
-          seats.push({ point: { x, y: row.y }, isBack: row.isBack, align: inner ? 'end' : 'center', anchor: inner ? edge : x, room: inner ? Math.floor(edge - middle) - 1 : Math.floor(pitch) - 1 })
+          seats.push({ point: { x, y: row.y }, isBack: row.isBack, align: inner ? 'end' : 'center', anchor: inner ? edge : x, room: Math.max(0, inner ? Math.floor(edge - middle) - 1 : Math.floor(pitch) - 1) })
         }
       }
     }
     return { seats, scale, pitch }
+  }
+
+  private static fit(canvas: Canvas, room: Room, n: number, margin: number, gap: number, min: number): Fit {
+    const left = Math.max(0, room.deskLeft - gap - margin)
+    const right = Math.max(0, canvas.width - margin - room.deskRight - gap)
+    const steps = Math.round((Scene.SEAT_MAX - min) / (Scene.SCALE_STEP * 2))
+    let result: Fit = { scale: Scene.SEAT_MAX, pitch: Colleagues.WIDTH * Scene.SEAT_MAX + gap, perLeft: 0, perRight: 0, gap, margin }
+    for (let k = 0; k <= steps; k++) {
+      const scale = Math.round((Scene.SEAT_MAX - k * Scene.SCALE_STEP * 2) * 1000) / 1000
+      const pitch = Colleagues.WIDTH * scale + gap
+      result = { scale, pitch, perLeft: Math.floor((left + gap) / pitch), perRight: Math.floor((right + gap) / pitch), gap, margin }
+      if (2 * (result.perLeft + result.perRight) >= n) break
+    }
+    return result
   }
 
   private static flight(origin: Point, slot: Point, age: number): Flight | undefined {
@@ -597,7 +639,7 @@ export class Scene {
     return label
   }
 
-  private static robot(canvas: Canvas, center: Point, p: Placed, input: SceneInput, ordinal: number): void {
+  private static robot(canvas: Canvas, hub: Point, p: Placed, input: SceneInput, ordinal: number): void {
     const seed = Canvas.hash((p.agent.startedAt + ordinal * 211) % 9973, p.index + 1)
     const color = Robots.accent(p.agent.type)
     let x = p.x
@@ -614,10 +656,9 @@ export class Scene {
       } else {
         const t = Math.min(1, (elapsed - Scene.FINALE_MS) / (Scene.EXIT_MS - Scene.FINALE_MS))
         const pull = Scene.easeIn(t)
-        const target = Scene.orchestratorEdge(canvas, center, { x: p.x, y: p.y })
-        Effects.teleport(canvas, { x: p.x, y: p.y }, target, t, color, input.frame)
-        x = p.x + (target.x - p.x) * pull
-        y = p.y + (target.y - p.y) * pull
+        Effects.teleport(canvas, { x: p.x, y: p.y }, hub, t, color, input.frame)
+        x = p.x + (hub.x - p.x) * pull
+        y = p.y + (hub.y - p.y) * pull
         scale = p.baseScale * Math.max(0, 1 - pull)
         if (scale < 0.08) return
       }
@@ -640,9 +681,7 @@ export class Scene {
     if (ordinal > 0 && p.exit === 0 && scale > 0.3) Scene.badge(canvas, x, y + (Colleagues.HEIGHT * scale) / 2 + 0.2, ordinal, color)
   }
 
-
-
-  private static shadow(canvas: Canvas, center: Point, p: Placed): void {
+  private static shadow(canvas: Canvas, hub: Point, p: Placed): void {
     let presence = 1
     let x = p.x
     let y = p.y
@@ -650,9 +689,8 @@ export class Scene {
       const elapsed = p.exit * Scene.EXIT_MS
       if (elapsed >= Scene.FINALE_MS) {
         const pull = Scene.easeIn(Math.min(1, (elapsed - Scene.FINALE_MS) / (Scene.EXIT_MS - Scene.FINALE_MS)))
-        const target = Scene.orchestratorEdge(canvas, center, { x: p.x, y: p.y })
-        x = p.x + (target.x - p.x) * pull
-        y = p.y + (target.y - p.y) * pull
+        x = p.x + (hub.x - p.x) * pull
+        y = p.y + (hub.y - p.y) * pull
         presence = 1 - pull
       }
     }
@@ -672,226 +710,91 @@ export class Scene {
     return counts
   }
 
-  private static edge(canvas: Canvas, center: Point, parent: Placed | undefined, p: Placed, input: SceneInput, recent: number): void {
-    const from: Point = parent ? { x: parent.x, y: parent.y } : center
-    const dx = p.x - from.x
-    const dy = p.y - from.y
-    const length = Math.max(1, Math.hypot(dx, dy))
-    if (length < Colleagues.WIDTH * 0.6 * p.scale + 4) return
-    const ux = dx / length
-    const uy = dy / length
-    const swirl = length * (parent ? 0.1 : 0.16)
-    const reachX = parent ? Colleagues.WIDTH * 0.42 * parent.scale : 5
-    const reachY = parent ? Colleagues.HEIGHT * 0.42 * parent.scale : 4
-    const p0: Point = { x: from.x + ux * reachX, y: from.y + uy * reachY }
-    const p3: Point = { x: p.x - ux * (Colleagues.WIDTH * 0.42 * p.scale), y: p.y - uy * (Colleagues.HEIGHT * 0.42 * p.scale) }
-    const p1: Point = { x: p0.x + dx * 0.3 - uy * swirl, y: p0.y + dy * 0.3 + ux * swirl }
-    const p2: Point = { x: p3.x - dx * 0.3 - uy * swirl * 0.4, y: p3.y - dy * 0.3 + ux * swirl * 0.4 }
-    const accent = Robots.accent(p.agent.type)
-    const cable = Scene.cable(p0, p1, p2, p3, parent ? Robots.accent(parent.agent.type) : Theme.ACCENT, accent, p.seed)
-    if (p.exit > 0) {
+  private static cables(canvas: Canvas, room: Room, placed: Placed[], input: SceneInput, light: number): Cabled {
+    const activity = Scene.activity(input.events, input.at)
+    const mid = (room.deskLeft + room.deskRight) / 2
+    const base = room.floorY + 3
+    const rows = canvas.height - base
+    const entries = placed.map(p => ({ p, parent: placed.find(o => o.agent.id === p.agent.parentId && o.exit === 0), lane: base, port: -1, prev: undefined as Placed | undefined }))
+    const order = (list: typeof entries): typeof entries => list.slice().sort((a, b) => Math.abs(a.p.slot.x - mid) - Math.abs(b.p.slot.x - mid) || Number(a.p.isAbove) - Number(b.p.isAbove))
+    const lefts = order(entries.filter(e => e.p.slot.x < mid))
+    const rights = order(entries.filter(e => e.p.slot.x >= mid))
+    const step = rows >= 2 * Math.max(lefts.length, rights.length) - 1 ? 2 : 1
+    for (const side of [lefts, rights]) {
+      side.forEach((e, r) => {
+        e.lane = base + Math.max(0, Math.min(r * step, rows - 1))
+        if (r < rows || e.parent) return
+        for (let k = r - 1; k >= 0; k--) {
+          const c = side[k]?.p
+          if (!c || c.exit > 0 || input.at - c.agent.startedAt < Scene.FLIGHT_MS || c.isAbove !== e.p.isAbove) continue
+          e.prev = c
+          break
+        }
+      })
+    }
+    const isSwitch = (e: (typeof entries)[number]): boolean => !e.parent && !e.prev
+    const mains = [...lefts.filter(isSwitch), ...rights.filter(isSwitch).reverse()]
+    mains.forEach((e, i) => (e.port = i))
+    const items: Cabling[] = []
+    const size = `${canvas.width}x${canvas.height}`
+    if (size !== Scene.wiresSize) {
+      Scene.WIRES.clear()
+      Scene.wiresSize = size
+    }
+    for (const { p, parent, lane, port, prev } of entries) {
+      const age = input.at - p.agent.startedAt
+      if (age < Scene.FLIGHT_MS) continue
       const elapsed = p.exit * Scene.EXIT_MS
-      if (elapsed < Scene.FINALE_MS) Scene.dissolve(canvas, cable, elapsed / Scene.FINALE_MS, input.at)
-      return
-    }
-    const latest = Scene.latestTool(p.agent.id, input.events, input.at)
-    const burst = latest ? Scene.burst(latest.age) : 0
-    const flash = Math.max(Scene.flash(p.agent.id, input), burst)
-    const warmth = latest ? Math.exp(-latest.age / 6000) : 0
-    const activity = Math.min(1, recent / 6 + 0.5 * warmth)
-    const isIdle = !latest || latest.age > Scene.IDLE_MS
-    if (parent) Scene.linkCable(canvas, cable, input.at, activity, flash)
-    else if (isIdle && flash === 0) {
-      Scene.dottedCable(canvas, cable, input.at)
-      return
-    } else Scene.energyCable(canvas, cable, input.at, activity, flash)
-    const tint = Scene.packetColor(p.agent, latest, input.isLive)
-    Scene.packets(canvas, cable, input.at, activity, flash, tint)
-    if (latest && burst > 0) Scene.sparks(canvas, cable, latest, burst, input.at, tint)
-    if (latest) Scene.returnPacket(canvas, cable, latest)
-  }
-
-  static cable(p0: Point, p1: Point, p2: Point, p3: Point, head: Rgb, tail: Rgb, seed: number): Cable {
-    const polyline = Math.hypot(p1.x - p0.x, p1.y - p0.y) + Math.hypot(p2.x - p1.x, p2.y - p1.y) + Math.hypot(p3.x - p2.x, p3.y - p2.y)
-    const n = Math.max(12, Math.min(120, Math.ceil(polyline / Scene.CABLE_STEP)))
-    const points: Point[] = []
-    let length = 0
-    for (let i = 0; i <= n; i++) {
-      const q = Canvas.bezier(p0, p1, p2, p3, i / n)
-      const last = points[points.length - 1]
-      if (last) length += Math.hypot(q.x - last.x, q.y - last.y)
-      points.push(q)
-    }
-    return { points, length, head, tail, seed }
-  }
-
-  private static along(cable: Cable, t: number): Point {
-    const n = cable.points.length - 1
-    const f = Math.max(0, Math.min(1, t)) * n
-    const i = Math.min(n - 1, Math.floor(f))
-    const a = cable.points[i] ?? { x: 0, y: 0 }
-    const b = cable.points[i + 1] ?? a
-    const k = f - i
-    return { x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k }
-  }
-
-  private static hue(cable: Cable, t: number): Rgb {
-    return Canvas.mix(cable.head, cable.tail, Math.max(0, Math.min(1, t)))
-  }
-
-  private static core(canvas: Canvas, cable: Cable, width: number, alpha: number, lift: number, every: number): void {
-    const n = cable.points.length - 1
-    for (let i = 0; i < n; i += every) {
-      const a = cable.points[i]
-      const b = cable.points[Math.min(n, i + every)]
-      if (!a || !b) continue
-      const c = Scene.hue(cable, (i + every / 2) / n)
-      canvas.line(a, b, width, lift > 0 ? Canvas.mix(c, Theme.WHITE, lift) : c, alpha)
-    }
-  }
-
-  private static halo(canvas: Canvas, cable: Cable, radius: number, alpha: number): void {
-    const n = cable.points.length - 1
-    const every = Math.max(1, Math.round((radius * 0.9) / Scene.CABLE_STEP))
-    for (let i = 0; i <= n; i += every) {
-      const q = cable.points[i]
-      if (q) canvas.glow(q.x, q.y, radius, Scene.hue(cable, i / n), alpha)
-    }
-  }
-
-  static energyCable(canvas: Canvas, cable: Cable, at: number, activity: number, flash: number): void {
-    Scene.halo(canvas, cable, 1.8 + 0.9 * flash, 0.08 + 0.05 * activity + 0.14 * flash)
-    Scene.core(canvas, cable, 0.6 + 0.45 * flash, 0.5 + 0.15 * activity + 0.3 * flash, 0.1 + 0.35 * flash, 2)
-    const speed = 3 + 13 * activity + 10 * flash
-    Scene.dashes(canvas, cable, (at / 1000) * speed, 3.4, 0.42, 0.75 + 0.25 * flash, 0.35 + 0.3 * flash)
-  }
-
-  private static linkCable(canvas: Canvas, cable: Cable, at: number, activity: number, flash: number): void {
-    Scene.halo(canvas, cable, 1.3 + 0.6 * flash, 0.04 + 0.1 * flash)
-    const n = cable.points.length - 1
-    const shift = (at / 1000) * (1.5 + 4 * activity + 6 * flash)
-    for (let i = 0; i < n; i++) {
-      const a = cable.points[i]
-      const b = cable.points[i + 1]
-      if (!a || !b) continue
-      const s = (i / n) * cable.length - shift
-      if (s - Math.floor(s / 2.2) * 2.2 > 1.2) continue
-      canvas.line(a, b, 0.34 + 0.3 * flash, Canvas.mix(Scene.hue(cable, i / n), Theme.WHITE, 0.15 + 0.35 * flash), 0.75)
-    }
-  }
-
-  private static dottedCable(canvas: Canvas, cable: Cable, at: number): void {
-    const shift = (at / 1000) * 0.8
-    const gap = 1.6
-    const first = gap - (shift - Math.floor(shift / gap) * gap)
-    for (let s = first; s < cable.length; s += gap) {
-      const t = s / cable.length
-      const q = Scene.along(cable, t)
-      canvas.fillCircle(q.x, q.y, 0.26, Canvas.mix(Scene.hue(cable, t), Theme.FAINT, 0.35), 0.45)
-    }
-    Scene.halo(canvas, cable, 1.2, 0.025)
-  }
-
-  private static dashes(canvas: Canvas, cable: Cable, shift: number, period: number, duty: number, alpha: number, lift: number): void {
-    const step = Scene.CABLE_STEP * 0.6
-    for (let s = 0; s < cable.length; s += step) {
-      const phase = (s - shift) / period
-      const f = phase - Math.floor(phase)
-      if (f > duty) continue
-      const head = f / duty
-      const t = s / cable.length
-      const q = Scene.along(cable, t)
-      canvas.plot(q.x, q.y, Canvas.mix(Scene.hue(cable, t), Theme.WHITE, lift + 0.3 * head), alpha * (0.35 + 0.65 * head))
-    }
-  }
-
-  private static packets(canvas: Canvas, cable: Cable, at: number, activity: number, flash: number, tint: Rgb): void {
-    const count = flash > 0.2 ? 3 : 2
-    const rate = (4 + 10 * activity + 12 * flash) / Math.max(8, cable.length)
-    for (let k = 0; k < count; k++) {
-      const u = (at / 1000) * rate + cable.seed + k / count
-      Scene.packet(canvas, cable, u - Math.floor(u), -0.035, tint, 1 + flash)
-    }
-  }
-
-  private static packet(canvas: Canvas, cable: Cable, t: number, tail: number, c: Rgb, boost: number): void {
-    for (let s = 4; s >= 1; s--) {
-      const u = t + tail * s
-      if (u < 0 || u > 1) continue
-      const q = Scene.along(cable, u)
-      canvas.fillCircle(q.x, q.y, 0.3 * (1 - s / 6), c, 0.55 * (1 - s / 5))
-    }
-    const head = Scene.along(cable, t)
-    canvas.glow(head.x, head.y, 1.6 * boost, c, 0.22 * Math.min(2, boost))
-    canvas.fillCircle(head.x, head.y, 0.45, Canvas.mix(c, Theme.WHITE, 0.35))
-  }
-
-  private static sparks(canvas: Canvas, cable: Cable, latest: ToolHit, burst: number, at: number, tint: Rgb): void {
-    const tick = Math.floor(at / 60)
-    const spread = 0.9 + 2.6 * (1 - burst)
-    for (let k = 0; k < 9; k++) {
-      const t = 0.1 + 0.85 * Canvas.hash(latest.event.id % 9973, k + 3)
-      const a = Scene.along(cable, Math.max(0, t - 0.02))
-      const b = Scene.along(cable, Math.min(1, t + 0.02))
-      const len = Math.max(1e-6, Math.hypot(b.x - a.x, b.y - a.y))
-      const side = Canvas.hash(k, latest.event.id % 997) < 0.5 ? -1 : 1
-      const q = Scene.along(cable, t)
-      const nx = (-(b.y - a.y) / len) * side
-      const ny = ((b.x - a.x) / len) * side * 0.6
-      const reach = spread * (0.6 + 0.4 * Canvas.hash(k, 41))
-      const flicker = 0.55 + 0.45 * Canvas.hash(k * 7 + 1, tick)
-      const tip: Point = { x: q.x + nx * reach, y: q.y + ny * reach }
-      canvas.glow(tip.x, tip.y, 1.3, tint, 0.4 * burst * flicker)
-      canvas.line({ x: q.x + nx * reach * 0.55, y: q.y + ny * reach * 0.55 }, tip, 0.3, Canvas.mix(tint, Theme.WHITE, 0.6), burst * flicker)
-    }
-  }
-
-  static returnPacket(canvas: Canvas, cable: Cable, latest: ToolHit): void {
-    if (latest.age < Scene.RETURN_FROM_MS || latest.age >= Scene.RETURN_TO_MS) return
-    const r = (latest.age - Scene.RETURN_FROM_MS) / (Scene.RETURN_TO_MS - Scene.RETURN_FROM_MS)
-    const c = Scene.TOOL_COLORS[Scene.toolKind(latest.event.label)]
-    const fade = Math.min(1, (1 - r) * 6)
-    const t = 1 - Scene.easeInOut(r)
-    for (let s = 5; s >= 1; s--) {
-      const u = t + 0.03 * s
-      if (u > 1) continue
-      const q = Scene.along(cable, u)
-      canvas.fillCircle(q.x, q.y, 0.5 * (1 - s / 7), c, 0.75 * fade * (1 - s / 6))
-    }
-    const head = Scene.along(cable, t)
-    canvas.glow(head.x, head.y, 2.8, c, 0.7 * fade)
-    canvas.fillCircle(head.x, head.y, 0.75, c, fade)
-    canvas.fillCircle(head.x, head.y, 0.38, Canvas.mix(c, Theme.WHITE, 0.6), fade)
-  }
-
-  static dissolve(canvas: Canvas, cable: Cable, t: number, at: number): void {
-    const u = Math.max(0, Math.min(1, t))
-    const n = cable.points.length - 1
-    if (u < 0.45) {
-      for (let i = 0; i < n; i += 2) {
-        if (Canvas.hash(i + 1, cable.seed * 331 + 9) < u / 0.45) continue
-        const a = cable.points[i]
-        const b = cable.points[Math.min(n, i + 2)]
-        if (a && b) canvas.line(a, b, 0.5, Canvas.mix(Scene.hue(cable, i / n), Theme.WHITE, 0.25), 0.6 * (1 - u / 0.45))
+      if (p.exit > 0 && elapsed >= Scene.FINALE_MS) continue
+      const latest = Scene.latestTool(p.agent.id, input.events, input.at)
+      const burst = latest ? Scene.burst(latest.age) : 0
+      const flash = Math.max(Scene.flash(p.agent.id, input), burst)
+      const warmth = latest ? Math.exp(-latest.age / 6000) : 0
+      const accent = Robots.accent(p.agent.type)
+      const look: WireLook = {
+        light,
+        activity: Math.min(1, (activity.get(p.agent.id) ?? 0) / 6 + 0.5 * warmth),
+        flash,
+        tint: Scene.packetColor(p.agent, latest, input.isLive),
+        isIdle: (!latest || latest.age > Scene.IDLE_MS) && flash === 0,
+        reveal: Math.min(1, Math.max(0, (age - Scene.FLIGHT_MS) / Scene.LAND_MS)),
+        exit: p.exit > 0 ? elapsed / Scene.FINALE_MS : 0,
+        at: input.at,
+        returnAge: latest?.age,
+        returnColor: latest ? Scene.TOOL_COLORS[Scene.toolKind(latest.event.label)] : accent,
       }
+      const inward: Side = p.slot.x < mid ? 1 : -1
+      const probe = Colleagues.plug(p.slot.x, p.slot.y, p.baseScale, inward).edge.x
+      const facing: Side = Math.abs(probe - mid) <= Office.SWITCH_WIDTH / 2 + 0.5 ? (-inward as Side) : inward
+      const plug = (q: Placed, side: Side): Plug => {
+        const o = Colleagues.plug(q.x, q.y, q.scale, side)
+        return { socket: o.socket, edge: { x: o.edge.x - (q.isAbove ? side * 0.5 : 0), y: o.edge.y } }
+      }
+      let from: Plug
+      let to = plug(p, facing)
+      if (parent) {
+        const dx = p.slot.x - parent.slot.x
+        const sides: [Side, Side] = Math.abs(dx) < 1 ? [-facing as Side, -facing as Side] : dx > 0 ? [1, -1] : [-1, 1]
+        from = plug(parent, sides[0])
+        to = plug(p, sides[1])
+      } else if (prev) {
+        from = plug(prev, -facing as Side)
+      } else {
+        const pt = Office.port(room, port, mains.length)
+        from = { socket: pt, edge: { x: pt.x, y: pt.y } }
+      }
+      const key = [p.agent.id, from.socket.x, from.socket.y, from.edge.x, from.edge.y, to.socket.x, to.socket.y, to.edge.x, to.edge.y, lane, room.floorY, accent.join(','), p.seed].join('|')
+      let cached = Scene.WIRES.get(p.agent.id)
+      if (!cached || cached.key !== key) {
+        const wall = prev && p.isAbove ? Math.max(from.edge.y, to.edge.y) + 1 : lane
+        cached = { key, wire: Wiring.route(from, to, room.floorY, wall, accent, p.seed) }
+        Scene.WIRES.set(p.agent.id, cached)
+      }
+      items.push({ p, look, wire: cached.wire })
     }
-    const count = Math.max(8, Math.round(cable.length / 0.9))
-    const wave = (at / 1000) * 3
-    for (let i = 0; i < count; i++) {
-      const h = Canvas.hash(i * 13 + 1, cable.seed * 977 + 5)
-      const life = 0.5 + 0.5 * h
-      if (u >= life) continue
-      const l = u / life
-      const s = (i + 0.5) / count
-      const q = Scene.along(cable, s)
-      const drift = Canvas.hash(i * 7 + 3, 11) - 0.5
-      const x = q.x + drift * 4.5 * l + Math.sin(wave + i) * 0.35 * l
-      const y = q.y - (1.5 + 3.5 * h) * l
-      const fade = Math.pow(1 - l, 1.2) * Math.min(1, l * 8 + 0.4)
-      const c = Canvas.mix(Scene.hue(cable, s), Theme.WHITE, 0.3)
-      canvas.glow(x, y, 1.4, c, 0.4 * fade)
-      canvas.fillCircle(x, y, 0.3 + 0.15 * (1 - l), c, fade)
-    }
+    const live = new Set(placed.map(p => p.agent.id))
+    for (const id of Scene.WIRES.keys()) if (!live.has(id)) Scene.WIRES.delete(id)
+    return { items, ports: mains.length }
   }
 
   static latestTool(agentId: string, events: readonly FlowEvent[], at: number): ToolHit | undefined {

@@ -2,6 +2,7 @@ import { Canvas, type Point, type Rgb } from './canvas'
 import { Festive } from './festive'
 import { Hats } from './hats'
 import { Night } from './night'
+import type { Room } from './office'
 
 export type Season = 'winter' | 'spring' | 'summer' | 'autumn'
 
@@ -61,6 +62,7 @@ export type Ambience = {
   celebrations: Celebration[]
 }
 
+export type Pane = { left: number; right: number; top: number; bottom: number }
 export type Obstacle = { x: number; y: number; w: number; h: number }
 export type Spot = { x: number; y: number; r: number; lift: number }
 type Frame2 = { o: Point; u: Point; v: Point }
@@ -175,6 +177,9 @@ export class Effects {
   private static readonly FLAG_RED: Rgb = [239, 51, 64]
   private static readonly VALENTINE_TINT: Rgb = [92, 22, 58]
   private static readonly NATIONAL_BURSTS: readonly Rgb[] = [[255, 244, 200], Effects.FLAG_YELLOW, Effects.FLAG_RED]
+  private static readonly ANCHORED: readonly string[] = ['glow', 'fillCircle', 'strokeCircle', 'fillEllipse', 'fillRect', 'block', 'fillRoundRect', 'strokeRoundRect', 'arc']
+  private static readonly SNOW_LIGHT: Rgb = [226, 238, 252]
+  private static readonly SNOW_SHADE: Rgb = [170, 192, 224]
   private static readonly SUNSET_TINT: Rgb = [255, 150, 90]
   private static readonly LIGHT: Partial<Record<TimeOfDay, number>> = { night: 0.45, evening: 0.65, dawn: 0.75, sunset: 0.85 }
   private static readonly PAPER: readonly Rgb[] = [
@@ -215,12 +220,12 @@ export class Effects {
     { slot: 'night', start: 1320 },
   ]
   private static readonly PALETTES: Record<TimeOfDay, Sky> = {
-    dawn: { top: [18, 16, 50], bottom: [104, 50, 70], halo: [150, 84, 92], stars: 0.4 },
-    morning: { top: [10, 28, 64], bottom: [20, 70, 84], halo: [40, 124, 132], stars: 0.05 },
-    midday: { top: [8, 32, 80], bottom: [24, 64, 112], halo: [56, 118, 176], stars: 0.05 },
-    afternoon: { top: [14, 28, 72], bottom: [86, 58, 46], halo: [160, 116, 70], stars: 0.05 },
-    sunset: { top: [32, 14, 56], bottom: [138, 42, 62], halo: [196, 84, 84], stars: 0.3 },
-    evening: { top: [10, 10, 34], bottom: [40, 24, 70], halo: [76, 44, 120], stars: 0.7 },
+    dawn: { top: [64, 72, 150], bottom: [255, 164, 110], halo: [255, 190, 130], stars: 0.4 },
+    morning: { top: [86, 158, 230], bottom: [186, 216, 242], halo: [200, 226, 250], stars: 0.05 },
+    midday: { top: [74, 150, 226], bottom: [160, 206, 240], halo: [190, 224, 250], stars: 0.05 },
+    afternoon: { top: [80, 146, 222], bottom: [190, 208, 236], halo: [236, 220, 190], stars: 0.05 },
+    sunset: { top: [70, 66, 140], bottom: [255, 130, 70], halo: [255, 170, 100], stars: 0.3 },
+    evening: { top: [12, 14, 44], bottom: [52, 32, 82], halo: [76, 44, 120], stars: 0.7 },
     night: { top: [5, 8, 18], bottom: [14, 19, 38], halo: [0, 52, 47], stars: 1 },
   }
   private static readonly HAT_HEIGHTS: Record<Holiday, number> = {
@@ -424,19 +429,121 @@ export class Effects {
     return timeOfDay === 'evening' || timeOfDay === 'night'
   }
 
-  static background(canvas: Canvas, frame: number, at: number, ambience: Ambience, obstacles: readonly Obstacle[] = []): void {
+  static outdoor(canvas: Canvas, frame: number, at: number, ambience: Ambience, obstacles: readonly Obstacle[], pane: Pane): void {
     const sky = Effects.sky(ambience, frame)
     const holiday = ambience.holiday
-    if (sky.stars > 0.1) Effects.twinkles(canvas, frame, sky.stars)
-    if (holiday === 'star-wars') Effects.warp(canvas, frame)
-    if (holiday === 'christmas') Effects.aurora(canvas, frame)
-    Effects.celestial(canvas, frame, ambience, sky, obstacles)
-    Effects.clouds(canvas, frame, ambience)
-    if (ambience.isDisco) Effects.discoBeams(canvas, frame)
-    if (sky.stars >= 0.25) Effects.shootingStar(canvas, frame, sky.stars)
-    if (Effects.isDark(ambience.timeOfDay)) Effects.comet(canvas, frame, sky.stars)
-    if (holiday === 'none') Effects.seasonBackground(canvas, frame, ambience)
-    else Effects.holidayBackground(canvas, frame, holiday, ambience.timeOfDay, obstacles)
+    const view = Effects.view(canvas, pane)
+    const near = Effects.shifted(obstacles, pane)
+    if (sky.stars > 0.1) Effects.twinkles(view, frame, sky.stars)
+    if (holiday === 'star-wars') Effects.warp(view, frame)
+    if (holiday === 'christmas') Effects.aurora(view, frame)
+    Effects.celestial(view, frame, ambience, sky, near)
+    Effects.clouds(view, frame, ambience)
+    if (sky.stars >= 0.25) Effects.shootingStar(view, frame, sky.stars)
+    if (Effects.isDark(ambience.timeOfDay)) Effects.comet(view, frame, sky.stars)
+    if (holiday === 'none') Effects.seasonOutdoor(view, frame, ambience)
+    else Effects.holidayOutdoor(view, frame, holiday, ambience.timeOfDay)
+    Effects.celebrateOutdoor(view, at, frame, ambience)
+  }
+
+  static sill(canvas: Canvas, frame: number, ambience: Ambience, pane: Pane, room: Room): void {
+    const isSnowy = ambience.holiday === 'christmas' || (ambience.holiday === 'none' && ambience.season === 'winter')
+    if (!isSnowy) return
+    const lit = Effects.dimmed(canvas, ambience.timeOfDay)
+    const left = Math.round(pane.left * 2) / 2
+    const width = Math.round((pane.right - pane.left) * 2) / 2
+    const y = Math.min(Math.round(pane.bottom) - 1, room.sillY - 1)
+    lit.block(left, y, width, 1, Effects.SNOW_LIGHT)
+    for (let x = left; x < left + width; x += 0.5) {
+      const bump = Canvas.hash(x * 2, 521)
+      if (bump > 0.55) lit.block(x, y - 1, 0.5, 1, Effects.SNOW_LIGHT)
+      if (bump > 0.9) lit.block(x, y - 2, 0.5, 1, Effects.WHITE)
+      if (bump < 0.25) lit.block(x, y, 0.5, 1, Effects.SNOW_SHADE)
+    }
+    const glint = Math.floor(frame / 6) % Math.max(1, Math.round(width * 2))
+    lit.block(left + glint * 0.5, y - 1, 0.5, 1, Effects.WHITE, 0.9)
+  }
+
+  static indoor(canvas: Canvas, frame: number, at: number, ambience: Ambience, room: Room, pane: Pane): void {
+    const lit = Effects.dimmed(canvas, ambience.timeOfDay)
+    const holiday = ambience.holiday
+    const isWinter = holiday === 'christmas' || (holiday === 'none' && ambience.season === 'winter')
+    const floorTop = room.floorY + 1
+    if (holiday === 'easter') Festive.eggsOn(lit, frame, 3, canvas.width - 3, floorTop, canvas.height - 1)
+    if (holiday === 'may-day') {
+      const start = room.spare >= 10 ? 12 : 8
+      if (room.spare >= start + 4) Festive.vase(lit, frame, room.deskLeft + start + 1.5, room.deskY)
+      else Festive.vase(lit, frame, Math.min(canvas.width - 5, room.deskRight + 3.5), room.sillY - 1)
+    }
+    if (holiday === 'national-day') {
+      const start = room.spare >= 10 ? 12 : 8
+      if (room.spare >= start + 4) Festive.deskFlag(lit, frame, room.deskLeft + start + 1.5, room.deskY)
+      else Festive.deskFlag(lit, frame, Math.min(canvas.width - 8, room.deskRight + 3.5), room.sillY - 1)
+    }
+    if (isWinter) Effects.frost(lit, frame, pane)
+    if (holiday === 'friday-13') {
+      Night.walkingCat(lit, frame, room.sillY, pane.left, pane.right)
+      const wall = room.floorY - room.sillY - 3
+      const scale = Math.max(0.5, Math.min(1, wall / 10))
+      const x = Math.round(Math.max(room.deskRight + 5, Math.min(canvas.width - 6, (room.deskRight + canvas.width * 0.89 - 4.5) / 2)) * 2) / 2
+      Night.brokenMirror(lit, frame, { x, y: room.sillY + 3 + 4.5 * scale }, scale)
+    }
+    if (ambience.isDisco) {
+      Effects.discoSpots(canvas, frame, room)
+      Night.mirrorBall(canvas, frame)
+    }
+    if (ambience.isDebuggerActive) Festive.ladybug(canvas, frame, 1)
+  }
+
+  static confetti(canvas: Canvas, frame: number, at: number, ambience: Ambience): void {
+    switch (ambience.holiday) {
+      case 'new-year':
+        Effects.drift(canvas, frame, Effects.NEW_YEAR, 14, 0)
+        break
+      case 'carnaval':
+        Effects.drift(canvas, frame, Effects.PAPER, 18, 20)
+        break
+      default:
+        break
+    }
+    if (ambience.isFridayParty) Effects.drift(canvas, frame, Effects.PAPER, 12, 0)
+    for (const c of ambience.celebrations) {
+      const age = at - c.at
+      if (c.kind !== 'confetti' || age < 0 || age >= Effects.CELEBRATION_MS) continue
+      Festive.confetti(canvas, age / 1000, Math.abs(c.at % 9973), frame)
+    }
+  }
+
+  private static view(canvas: Canvas, pane: Pane): Canvas {
+    const ox = Math.round(pane.left * 2) / 2
+    const oy = Math.round(pane.top)
+    const width = pane.right - ox
+    const height = pane.bottom - oy
+    const isPoint = (v: unknown): v is Point => typeof v === 'object' && v !== null && 'x' in v && 'y' in v
+    return new Proxy(canvas, {
+      get: (obj, prop) => {
+        if (prop === 'width') return width
+        if (prop === 'height') return height
+        const member: unknown = Reflect.get(obj, prop, obj)
+        if (typeof member !== 'function') return member
+        const isAnchored = typeof prop === 'string' && Effects.ANCHORED.includes(prop)
+        return (...args: unknown[]): unknown =>
+          member.apply(
+            obj,
+            args.map((a, k) => {
+              if (isAnchored && typeof a === 'number' && k < 2) return a + (k === 0 ? ox : oy)
+              if (!isAnchored && isPoint(a)) return { x: a.x + ox, y: a.y + oy }
+              return a
+            }),
+          )
+      },
+    })
+  }
+
+  private static shifted(obstacles: readonly Obstacle[], pane: Pane): Obstacle[] {
+    const ox = Math.round(pane.left * 2) / 2
+    const oy = Math.round(pane.top)
+    return obstacles.map(o => ({ x: o.x - ox, y: o.y - oy, w: o.w, h: o.h }))
   }
 
   static hat(canvas: Canvas, cx: number, top: number, width: number, ambience: Ambience, frame: number, seed: number): void {
@@ -505,25 +612,6 @@ export class Effects {
     Hats.sleeping(canvas, x, y, frame)
   }
 
-  static celebrate(canvas: Canvas, center: Point, at: number, frame: number, ambience: Ambience): void {
-    for (const c of ambience.celebrations) {
-      const age = at - c.at
-      if (age < 0 || age >= Effects.CELEBRATION_MS) continue
-      const seed = Math.abs(c.at % 9973)
-      switch (c.kind) {
-        case 'confetti':
-          Festive.confetti(canvas, age / 1000, seed, frame)
-          break
-        case 'fireworks':
-          Effects.fireworks(canvas, center, age / 1000, seed)
-          break
-        case 'rocket':
-          Night.rocket(canvas, center, age / 1000, seed, frame)
-          break
-      }
-    }
-  }
-
   static finale(canvas: Canvas, at: Point, t: number, status: ExitStatus, color: Rgb, frame: number, seed: number): void {
     const u = Math.max(0, Math.min(1, t))
     switch (status) {
@@ -567,33 +655,19 @@ export class Effects {
     canvas.glow(to.x, to.y, 4 + 2 * Math.sin(frame * 0.6), color, 0.35 * env)
   }
 
-  static foreground(canvas: Canvas, frame: number, at: number, ambience: Ambience): void {
-    switch (ambience.holiday) {
-      case 'christmas':
-        Night.snow(canvas, frame, 8, 50, 1.8)
-        break
-      case 'new-year':
-        Effects.drift(canvas, frame, Effects.NEW_YEAR, 14, 0)
-        break
-      case 'carnaval':
-        Effects.drift(canvas, frame, Effects.PAPER, 18, 20)
-        break
-      case 'valentine':
-        Festive.hearts(canvas, frame, 3, 40, 1.8)
-        break
-      case 'none':
-        Effects.seasonForeground(canvas, frame, ambience.season, ambience.timeOfDay)
-        break
-      default:
-        break
+  static celebrateOutdoor(canvas: Canvas, at: number, frame: number, ambience: Ambience): void {
+    const center: Point = { x: canvas.width / 2, y: canvas.height }
+    for (const c of ambience.celebrations) {
+      const age = at - c.at
+      if (age < 0 || age >= Effects.CELEBRATION_MS) continue
+      const seed = Math.abs(c.at % 9973)
+      if (c.kind === 'fireworks') Effects.fireworks(canvas, center, age / 1000, seed)
+      else if (c.kind === 'rocket') Night.rocket(canvas, center, age / 1000, seed, frame)
     }
-    if (ambience.isFridayParty) Effects.drift(canvas, frame, Effects.PAPER, 12, 0)
-    if (ambience.isDisco) Night.mirrorBall(canvas, frame)
-    if (ambience.isDebuggerActive) Festive.ladybug(canvas, frame)
   }
 
   private static celestial(canvas: Canvas, frame: number, ambience: Ambience, sky: Sky, obstacles: readonly Obstacle[]): void {
-    const spot = Effects.celestialSpot(canvas, ambience, obstacles)
+    const spot = Effects.spotIn(canvas, ambience, obstacles)
     if (Effects.isMoonUp(ambience)) {
       if (ambience.holiday === 'halloween') Night.harvestMoon(canvas, frame, spot)
       else Night.paleMoon(canvas, Canvas.mix(sky.top, sky.bottom, 0.12), spot)
@@ -610,7 +684,13 @@ export class Effects {
     return minute >= sun.civilDusk || minute < sun.civilDawn
   }
 
-  static celestialSpot(canvas: Canvas, ambience: Ambience, obstacles: readonly Obstacle[] = []): Spot {
+  static celestialSpot(canvas: Canvas, ambience: Ambience, obstacles: readonly Obstacle[] = [], pane?: Pane): Spot {
+    if (!pane) return Effects.spotIn(canvas, ambience, obstacles)
+    const spot = Effects.spotIn(Effects.view(canvas, pane), ambience, Effects.shifted(obstacles, pane))
+    return { ...spot, x: spot.x + Math.round(pane.left * 2) / 2, y: spot.y + Math.round(pane.top) }
+  }
+
+  private static spotIn(canvas: Canvas, ambience: Ambience, obstacles: readonly Obstacle[]): Spot {
     const w = canvas.width
     const m = Math.min(w, canvas.height)
     if (Effects.isMoonUp(ambience)) {
@@ -662,16 +742,14 @@ export class Effects {
     })
   }
 
-  private static seasonBackground(target: Canvas, frame: number, ambience: Ambience): void {
+  private static seasonOutdoor(target: Canvas, frame: number, ambience: Ambience): void {
     const canvas = Effects.dimmed(target, ambience.timeOfDay)
     switch (ambience.season) {
       case 'winter':
-        Night.snow(canvas, frame, 16, 0, 1)
-        Effects.frost(canvas, frame)
+        Night.snow(canvas, frame, Effects.density(target, 16), 0, 1)
         return
       case 'spring':
-        Festive.petals(canvas, frame, 14, 0, 1)
-        Festive.meadow(canvas, frame)
+        Festive.petals(canvas, frame, Effects.density(target, 12), 0, 1)
         return
       case 'summer':
         if (Effects.isDark(ambience.timeOfDay)) Festive.fireflies(target, frame)
@@ -681,31 +759,20 @@ export class Effects {
         }
         return
       case 'autumn':
-        Festive.leaves(canvas, frame, 16, 0, 1.1)
+        Festive.leaves(canvas, frame, Effects.density(target, 14), 0, 1.1)
         return
     }
   }
 
-  private static seasonForeground(target: Canvas, frame: number, season: Season, timeOfDay: TimeOfDay): void {
-    const canvas = Effects.dimmed(target, timeOfDay)
-    switch (season) {
-      case 'winter':
-        Night.snow(canvas, frame, 5, 50, 1.8)
-        return
-      case 'spring':
-        Festive.petals(canvas, frame, 4, 80, 1.8)
-        return
-      case 'summer':
-        return
-      case 'autumn':
-        Festive.leaves(canvas, frame, 3, 90, 1.7)
-        return
-    }
+  private static density(canvas: Canvas, count: number): number {
+    return Math.max(4, Math.round((count * canvas.width * canvas.height) / 1500))
   }
 
-  private static holidayBackground(canvas: Canvas, frame: number, holiday: Holiday, timeOfDay: TimeOfDay, obstacles: readonly Obstacle[]): void {
+  private static holidayOutdoor(canvas: Canvas, frame: number, holiday: Holiday, timeOfDay: TimeOfDay): void {
     switch (holiday) {
       case 'none':
+      case 'may-day':
+      case 'friday-13':
         return
       case 'new-year':
         Effects.bursts(canvas, frame, Effects.NEW_YEAR, 450, 30)
@@ -716,7 +783,7 @@ export class Effects {
         Effects.glitter(canvas, frame, Effects.GOLD, 7, 470)
         return
       case 'valentine':
-        Festive.hearts(canvas, frame, 12, 0, 1)
+        Festive.hearts(canvas, frame, Effects.density(canvas, 8), 0, 1)
         return
       case 'carnaval':
         Festive.oranges(canvas, frame)
@@ -729,10 +796,6 @@ export class Effects {
         return
       case 'easter':
         Effects.bells(canvas, frame)
-        Festive.eggs(Effects.dimmed(canvas, timeOfDay), frame)
-        return
-      case 'may-day':
-        Festive.lilies(Effects.dimmed(canvas, timeOfDay), frame)
         return
       case 'star-wars':
         Festive.sabers(canvas, frame)
@@ -742,7 +805,6 @@ export class Effects {
         return
       case 'national-day':
         Effects.bursts(canvas, frame, Effects.NATIONAL_BURSTS, 400, 38)
-        Festive.nationalFlag(canvas, frame, obstacles)
         return
       case 'halloween':
         Night.bats(canvas, frame)
@@ -751,12 +813,7 @@ export class Effects {
         Night.speculoos(canvas, frame)
         return
       case 'christmas':
-        Night.snow(canvas, frame, 30, 0, 1)
-        Effects.frost(canvas, frame)
-        return
-      case 'friday-13':
-        Night.brokenMirror(canvas, frame)
-        Night.walkingCat(canvas, frame)
+        Night.snow(Effects.dimmed(canvas, timeOfDay), frame, Effects.density(canvas, 24), 0, 1)
         return
     }
   }
@@ -770,13 +827,14 @@ export class Effects {
   }
 
   private static twinkles(canvas: Canvas, frame: number, stars: number): void {
-    for (let i = 0; i < 26; i++) {
+    const count = Math.max(8, Math.min(26, Math.round((26 * canvas.width * canvas.height) / 2400)))
+    for (let i = 0; i < count; i++) {
       const sway = frame * (0.006 + Canvas.hash(i, 43) * 0.006) + i * 1.7
       const x = Canvas.hash(i, 31) * canvas.width + Math.sin(sway) * 0.45
       const y = Canvas.hash(i, 37) * canvas.height * 0.85 + Math.cos(sway * 0.8) * 0.25
       const tw = 0.5 + 0.5 * Math.sin(frame * (0.08 + Canvas.hash(i, 41) * 0.12) + i * 2.1)
       const c = Canvas.mix([200, 214, 255], Effects.WHITE, tw)
-      canvas.glow(x, y, 1.2 + tw * 0.9, c, (0.25 + 0.35 * tw) * stars)
+      canvas.glow(x, y, 0.9 + tw * 0.7, c, (0.3 + 0.4 * tw) * stars)
       if (tw > 0.85 && i % 3 === 0) Festive.sparkle(canvas, x, y, 0.9, c, (tw - 0.85) * 4 * stars)
     }
   }
@@ -823,18 +881,21 @@ export class Effects {
     canvas.fillCircle(hx, hy, 0.45, Effects.WHITE, fade)
   }
 
-  private static discoBeams(canvas: Canvas, frame: number): void {
-    const apex: Point = { x: canvas.width / 2, y: 5 }
-    const reach = canvas.height * 1.15
-    for (let i = 0; i < 4; i++) {
-      const angle = Math.PI / 2 + Math.sin(frame * 0.045 + i * 1.6) * 1.05
-      const spread = 0.13
+  private static discoSpots(canvas: Canvas, frame: number, room: Room): void {
+    const w = canvas.width
+    const wall = Math.max(2, room.floorY - room.sillY)
+    for (let i = 0; i < 6; i++) {
       const c = Effects.DISCO[(i + Math.floor(frame / 40)) % Effects.DISCO.length] ?? Effects.WHITE
-      const a: Point = { x: apex.x + Math.cos(angle - spread) * reach, y: apex.y + Math.sin(angle - spread) * reach }
-      const b: Point = { x: apex.x + Math.cos(angle + spread) * reach, y: apex.y + Math.sin(angle + spread) * reach }
-      canvas.fillTriangle(apex, a, b, c, 0.085)
-      const spot: Point = { x: apex.x + Math.cos(angle) * reach * 0.7, y: apex.y + Math.sin(angle) * reach * 0.7 }
-      canvas.glow(spot.x, spot.y, 7, c, 0.12)
+      const drift = Math.sin(frame * (0.03 + i * 0.006) + i * 1.9) * 0.5 + 0.5
+      const x = Math.round((((i * 0.19 + drift * 0.35 + frame * 0.0008) % 1) * w) * 2) / 2
+      const onWall = i % 3 !== 2
+      const y = onWall
+        ? room.sillY + 1 + Math.round(((Math.cos(frame * 0.05 + i * 2.3) + 1) / 2) * (wall - 2))
+        : room.floorY + 1 + Math.round(((Math.cos(frame * 0.05 + i * 2.3) + 1) / 2) * Math.max(0, canvas.height - room.floorY - 3))
+      const rx = onWall ? 2.5 : 3.5
+      canvas.glow(x, y, rx * 2.2, c, 0.14)
+      canvas.fillEllipse(x, y, rx, 1, c, 0.32)
+      canvas.fillEllipse(x, y, rx * 0.5, 0.5, Canvas.mix(c, Effects.WHITE, 0.6), 0.55)
     }
   }
 
@@ -865,7 +926,7 @@ export class Effects {
       if (te > life) continue
       const fade = 1 - te / life
       if (te < 0.25) canvas.glow(bx, by, 9 * (1 - te * 4), Canvas.mix(c, Effects.WHITE, 0.5), 0.5 * (1 - te * 4))
-      const radius = 13 * (1 - Math.exp(-3.2 * te))
+      const radius = Math.min(13, canvas.width * 0.3) * (1 - Math.exp(-3.2 * te))
       const drop = 2.4 * te * te
       const n = 22
       for (let j = 0; j < n; j++) {
@@ -997,15 +1058,37 @@ export class Effects {
     }
   }
 
-  private static frost(canvas: Canvas, frame: number): void {
-    for (let x = 0; x <= canvas.width; x += 10) canvas.glow(x, canvas.height + 1, 6, Effects.ICE, 0.13)
-    for (let i = 0; i < 18; i++) {
-      const x = Canvas.hash(i, 501) * canvas.width
-      const y = canvas.height - 0.7 - Canvas.hash(i, 502) * 2.6
-      const tw = Math.sin(frame * (0.06 + Canvas.hash(i, 503) * 0.08) + i * 2.4)
-      if (tw > 0.55) Festive.sparkle(canvas, x, y, 0.7 + (tw - 0.55) * 2.2, Effects.ICE, (tw - 0.55) * 2.2)
-      else canvas.fillCircle(x, y, 0.3, Effects.ICE, 0.45)
-    }
+  private static frost(canvas: Canvas, frame: number, pane: Pane): void {
+    const left = Math.round(pane.left * 2) / 2
+    const right = Math.round(pane.right * 2) / 2
+    const top = Math.round(pane.top)
+    const bottom = Math.round(pane.bottom)
+    const reach = Math.max(4, Math.min(9, Math.round((right - left) / 3)))
+    const corners: readonly (readonly [number, number, number, number])[] = [
+      [left, top, 1, 1],
+      [right, top, -1, 1],
+      [left, bottom, 1, -1],
+      [right, bottom, -1, -1],
+    ]
+    corners.forEach(([cx, cy, dx, dy], k) => {
+      for (let j = 0; j < reach; j++) {
+        const run = Math.max(0, (reach - j) * 1.2 - 0.5 + (Canvas.hash(j + k * 9, 511) - 0.5) * 1.5)
+        const width = Math.round(run * 2) / 2
+        if (width <= 0) continue
+        const y = dy > 0 ? cy + j : cy - j - 1
+        const x = dx > 0 ? cx : cx - width
+        canvas.block(x, y, width, 1, Effects.ICE, 0.7 - (j / reach) * 0.3)
+        const edge = dx > 0 ? x : x + width - 0.5
+        canvas.block(edge, y, 0.5, 1, Effects.WHITE, 0.75)
+      }
+      for (let b = 1; b <= 2; b++) {
+        const bx = cx + dx * (b * 1.8 + 0.5)
+        const by = cy + dy * (b + 0.5) * 1.2
+        canvas.block(Math.round(bx * 2) / 2, Math.round(by - (dy > 0 ? 0 : 1)), 0.5, 1, Effects.WHITE, 0.55)
+      }
+      const tw = Math.sin(frame * (0.07 + k * 0.013) + k * 2.1)
+      if (tw > 0.5) Festive.sparkle(canvas, cx + dx * 1.5, cy + dy * 1.5, 0.7 + (tw - 0.5) * 1.6, Effects.ICE, (tw - 0.5) * 2)
+    })
   }
 
   private static haze(canvas: Canvas, frame: number): void {

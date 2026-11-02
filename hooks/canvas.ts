@@ -45,6 +45,8 @@ class Base64 {
   }
 }
 
+export type ClipRect = { left: number; right: number; top: number; bottom: number }
+
 export class Canvas {
   static readonly HD_CELL_WIDTH = 6
   static readonly HD_CELL_HEIGHT = 12
@@ -82,6 +84,10 @@ export class Canvas {
   private by0 = 0
   private bx1 = -1
   private by1 = -1
+  private cx0 = 0
+  private cy0 = 0
+  private cx1 = 0
+  private cy1 = 0
 
   constructor(
     readonly columns: number,
@@ -97,6 +103,8 @@ export class Canvas {
     this.sx = this.pw / this.width
     this.sy = this.ph / this.height
     this.aa = (1 / this.sx + 1 / this.sy) / 2
+    this.cx1 = this.pw
+    this.cy1 = this.ph
     this.buf = new Float32Array(this.pw * this.ph * 3)
     this.scratch = new Float32Array(this.pw * this.ph)
     const cells = mode === 'hd' ? 0 : columns * rows
@@ -156,12 +164,26 @@ export class Canvas {
     return Math.sqrt(dx * dx + dy * dy)
   }
 
+  clip(rect?: ClipRect): void {
+    if (!rect) {
+      this.cx0 = 0
+      this.cy0 = 0
+      this.cx1 = this.pw
+      this.cy1 = this.ph
+      return
+    }
+    this.cx0 = Math.max(0, Math.round(rect.left * this.sx))
+    this.cy0 = Math.max(0, Math.round(rect.top * this.sy))
+    this.cx1 = Math.min(this.pw, Math.round(rect.right * this.sx))
+    this.cy1 = Math.min(this.ph, Math.round(rect.bottom * this.sy))
+  }
+
   paint(shader: (x: number, y: number) => Rgb): void {
-    const { pw, ph, sx, sy, buf } = this
-    let k = 0
-    for (let j = 0; j < ph; j++) {
+    const { pw, sx, sy, buf } = this
+    for (let j = this.cy0; j < this.cy1; j++) {
       const y = (j + 0.5) / sy
-      for (let i = 0; i < pw; i++) {
+      let k = (j * pw + this.cx0) * 3
+      for (let i = this.cx0; i < this.cx1; i++) {
         const c = shader((i + 0.5) / sx, y)
         buf[k++] = c[0]
         buf[k++] = c[1]
@@ -170,40 +192,13 @@ export class Canvas {
     }
   }
 
-  plot(x: number, y: number, c: Rgb, alpha: number): void {
-    if (this.sx > 2 || this.sy > 2) {
-      this.glow(x, y, 0.55, c, alpha)
-      return
-    }
-    const { pw, ph, buf } = this
-    const fx = x * this.sx - 0.5
-    const fy = y * this.sy - 0.5
-    const ix = Math.floor(fx)
-    const iy = Math.floor(fy)
-    const tx = fx - ix
-    const ty = fy - iy
-    for (let dj = 0; dj < 2; dj++) {
-      const j = iy + dj
-      if (j < 0 || j >= ph) continue
-      for (let di = 0; di < 2; di++) {
-        const i = ix + di
-        if (i < 0 || i >= pw) continue
-        const w = (di === 0 ? 1 - tx : tx) * (dj === 0 ? 1 - ty : ty) * alpha
-        const k = (j * pw + i) * 3
-        buf[k] = (buf[k] ?? 0) + c[0] * w
-        buf[k + 1] = (buf[k + 1] ?? 0) + c[1] * w
-        buf[k + 2] = (buf[k + 2] ?? 0) + c[2] * w
-      }
-    }
-  }
-
   glow(cx: number, cy: number, radius: number, c: Rgb, alpha: number): void {
     if (radius <= 0) return
-    const { pw, ph, sx, sy, buf } = this
-    const i0 = Math.max(0, Math.floor((cx - radius) * sx))
-    const i1 = Math.min(pw - 1, Math.ceil((cx + radius) * sx))
-    const j0 = Math.max(0, Math.floor((cy - radius) * sy))
-    const j1 = Math.min(ph - 1, Math.ceil((cy + radius) * sy))
+    const { pw, sx, sy, buf } = this
+    const i0 = Math.max(this.cx0, Math.floor((cx - radius) * sx))
+    const i1 = Math.min(this.cx1 - 1, Math.ceil((cx + radius) * sx))
+    const j0 = Math.max(this.cy0, Math.floor((cy - radius) * sy))
+    const j1 = Math.min(this.cy1 - 1, Math.ceil((cy + radius) * sy))
     const r2 = radius * radius
     for (let j = j0; j <= j1; j++) {
       const dy = (j + 0.5) / sy - cy
@@ -254,13 +249,13 @@ export class Canvas {
   }
 
   block(x: number, y: number, w: number, h: number, c: Rgb, alpha = 1): void {
-    const { pw, ph, sx, sy, buf } = this
+    const { pw, sx, sy, buf } = this
     const u0 = Math.round(x * sx)
     const v0 = Math.round(y * sy)
-    const i0 = Math.max(0, u0)
-    const i1 = Math.min(pw, Math.max(u0 + 1, Math.round((x + w) * sx)))
-    const j0 = Math.max(0, v0)
-    const j1 = Math.min(ph, Math.max(v0 + 1, Math.round((y + h) * sy)))
+    const i0 = Math.max(this.cx0, u0)
+    const i1 = Math.min(this.cx1, Math.max(u0 + 1, Math.round((x + w) * sx)))
+    const j0 = Math.max(this.cy0, v0)
+    const j1 = Math.min(this.cy1, Math.max(v0 + 1, Math.round((y + h) * sy)))
     const a = alpha >= 1 ? 1 : alpha <= 0 ? 0 : alpha
     if (a === 0 || i1 <= i0 || j1 <= j0) return
     const keep = 1 - a
@@ -455,11 +450,11 @@ export class Canvas {
   }
 
   private raster(kind: number, x0: number, y0: number, x1: number, y1: number, c: Rgb, alpha: number): void {
-    const { pw, ph, sx, sy, buf } = this
-    const i0 = Math.max(0, Math.floor(x0 * sx) - 1)
-    const i1 = Math.min(pw - 1, Math.ceil(x1 * sx) + 1)
-    const j0 = Math.max(0, Math.floor(y0 * sy) - 1)
-    const j1 = Math.min(ph - 1, Math.ceil(y1 * sy) + 1)
+    const { pw, sx, sy, buf } = this
+    const i0 = Math.max(this.cx0, Math.floor(x0 * sx) - 1)
+    const i1 = Math.min(this.cx1 - 1, Math.ceil(x1 * sx) + 1)
+    const j0 = Math.max(this.cy0, Math.floor(y0 * sy) - 1)
+    const j1 = Math.min(this.cy1 - 1, Math.ceil(y1 * sy) + 1)
     const cr = c[0]
     const cg = c[1]
     const cb = c[2]
@@ -497,11 +492,11 @@ export class Canvas {
   }
 
   private segment(ax: number, ay: number, bx: number, by: number, hw: number): void {
-    const { pw, ph, sx, sy, scratch } = this
-    const i0 = Math.max(0, Math.floor((Math.min(ax, bx) - hw) * sx) - 1)
-    const i1 = Math.min(pw - 1, Math.ceil((Math.max(ax, bx) + hw) * sx) + 1)
-    const j0 = Math.max(0, Math.floor((Math.min(ay, by) - hw) * sy) - 1)
-    const j1 = Math.min(ph - 1, Math.ceil((Math.max(ay, by) + hw) * sy) + 1)
+    const { pw, sx, sy, scratch } = this
+    const i0 = Math.max(this.cx0, Math.floor((Math.min(ax, bx) - hw) * sx) - 1)
+    const i1 = Math.min(this.cx1 - 1, Math.ceil((Math.max(ax, bx) + hw) * sx) + 1)
+    const j0 = Math.max(this.cy0, Math.floor((Math.min(ay, by) - hw) * sy) - 1)
+    const j1 = Math.min(this.cy1 - 1, Math.ceil((Math.max(ay, by) + hw) * sy) + 1)
     if (i1 < i0 || j1 < j0) return
     if (i0 < this.bx0) this.bx0 = i0
     if (j0 < this.by0) this.by0 = j0
@@ -580,6 +575,7 @@ export class Canvas {
       const bits = glyph[j] ?? 0
       for (let i = 0; i < Canvas.HD_CELL_WIDTH; i++) {
         const on = ((bits >> (Canvas.HD_CELL_WIDTH - 1 - i)) & 1) === 1
+        if (x0 + i < this.cx0 || x0 + i >= this.cx1 || y0 + j < this.cy0 || y0 + j >= this.cy1) continue
         const k = ((y0 + j) * pw + x0 + i) * 3
         buf[k] = on ? color[0] : br
         buf[k + 1] = on ? color[1] : bg

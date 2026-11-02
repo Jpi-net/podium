@@ -1,6 +1,7 @@
 import { Canvas, type Rgb } from './canvas'
 import { Robots, type RobotInput } from './robots'
 import { Raster, Sprite, type Palette, type Tint } from './sprite'
+import type { Plug, Side } from './wiring'
 
 type Headgear = 'hardhat' | 'cap' | 'beanie' | 'headset' | 'glasses' | 'none'
 
@@ -125,6 +126,17 @@ export class Colleagues {
     raster.blit(canvas, cx, cy + bounce, scale, tint)
     if (input.mood === 'working' && input.flash > 0) {
       canvas.glow(cx, cy - 1.5 * scale, 4 * scale, input.toolColor ?? Colleagues.LOGO, 0.22 * input.flash)
+    }
+  }
+
+  static plug(cx: number, cy: number, scale: number, side: Side): Plug {
+    const f = Raster.factor(scale)
+    const snap = Math.round(cx * 2) / 2
+    const y = Math.round(cy)
+    const snapHalf = (v: number): number => Math.round(v * 2) / 2
+    return {
+      socket: { x: snapHalf(snap + side * 1.5 * f) - (side < 0 ? 0.5 : 0), y: y + Math.floor(3 * f) },
+      edge: { x: snapHalf(snap + side * 4.5 * f) - (side < 0 ? 0.5 : 0), y: y + Math.floor(4 * f) },
     }
   }
 

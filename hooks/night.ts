@@ -372,11 +372,13 @@ export class Night {
     Raster.paint(canvas, sprite, { Y: Canvas.mix(Night.GOLD, Night.WHITE, 0.35), G: Night.GOLD, W: Night.WHITE, X: Canvas.mix(Night.WHITE, Night.GOLD, 0.3) }, x, y, 1, 1, true)
   }
 
-  static walkingCat(canvas: Canvas, frame: number): void {
+  static walkingCat(canvas: Canvas, frame: number, baseline: number = canvas.height, left = 0, right: number = canvas.width): void {
     const s = 1.25
-    const span = canvas.width + 20
-    const x = ((frame * 0.16) % span) - 10
-    const y = canvas.height - 3.1 * s
+    const lo = left + 5
+    const span = Math.max(1, right - 5 - lo)
+    const x = lo + ((frame * 0.16) % span)
+    const fade = Math.max(0, Math.min(1, (x - lo) / 3, (lo + span - x) / 3))
+    const y = baseline - 3.1 * s
     const step = frame * 0.45
     const sway = Math.round(Math.sin(frame * 0.09) * 1.2)
     const ras = new Raster(-14, -10, 28, 16)
@@ -391,23 +393,23 @@ export class Night {
       [-9, -7],
     ]
     tail.forEach(([tx, ty], j) => ras.rect(tx + (j >= 3 ? sway : 0), ty, 2, 1, Night.CAT))
-    const ground = Math.round(canvas.height - 0.4 - y)
+    const ground = Math.round(baseline - 0.4 - y)
     const legs = [-5, -3, 3, 5] as const
     legs.forEach((lx, j) => {
       const swing = Math.round(Math.sin(step + (j % 2) * Math.PI + (j > 1 ? 0.6 : 0)) * 1.2)
       for (let row = 1; row < ground; row++) ras.dot(lx + (row === ground - 1 ? swing : row === ground - 2 ? Math.round(swing / 2) : 0), row, Night.CAT)
     })
     Night.rim(ras, Night.CAT_RIM, 0.7)
-    canvas.glow(x + 4, y - 3, 1.6 * s, Night.CAT_EYE, 0.45)
-    ras.blit(canvas, x, y, 1)
+    canvas.glow(x + 4, y - 3, 1.6 * s, Night.CAT_EYE, 0.45 * fade)
+    ras.blit(canvas, x, y, 1, 'none', fade)
   }
 
-  static brokenMirror(canvas: Canvas, frame: number): void {
-    const cx = canvas.width * 0.88
-    const cy = canvas.height * 0.2
+  static brokenMirror(canvas: Canvas, frame: number, at?: Point, scale = 1): void {
+    const cx = at?.x ?? canvas.width * 0.88
+    const cy = at?.y ?? canvas.height * 0.2
     const rx = 3.2
     const ry = 4.3
-    canvas.glow(cx, cy, 7, [180, 196, 230], 0.1)
+    canvas.glow(cx, cy, 7 * scale, [180, 196, 230], 0.1)
     const ras = new Raster(-10, -7, 20, 14)
     ras.oval(0, 0, (rx + 0.8) * 2, ry + 0.8, [120, 86, 40])
     ras.oval(0, 0, (rx + 0.4) * 2, ry + 0.4, Canvas.mix(Night.GOLD, Night.INK, 0.25))
@@ -426,10 +428,10 @@ export class Night {
     }
     ras.dot(hit.x, hit.y, Night.WHITE)
     ras.outline()
-    ras.blit(canvas, cx, cy, 1)
+    ras.blit(canvas, cx, cy, scale)
     mids.forEach((mid, j) => {
       const tw = Math.sin(frame * 0.12 + j * 2.3)
-      if (tw > 0.6) Night.sparkle(canvas, cx + mid.x * 0.5, cy + mid.y, 0.6 + (tw - 0.6) * 2.5, [200, 220, 255], (tw - 0.6) * 2.5)
+      if (tw > 0.6) Night.sparkle(canvas, cx + mid.x * 0.5 * scale, cy + mid.y * scale, 0.6 + (tw - 0.6) * 2.5, [200, 220, 255], (tw - 0.6) * 2.5)
     })
   }
 

@@ -1,5 +1,4 @@
 import { Canvas, type Point, type Rgb } from './canvas'
-import type { Obstacle } from './effects'
 import { Raster, Sprite, type Palette } from './sprite'
 
 export class Festive {
@@ -12,7 +11,6 @@ export class Festive {
   private static readonly PUMPKIN: Rgb = [255, 132, 26]
   private static readonly SHELL: Rgb = [232, 36, 40]
   private static readonly PETAL: Rgb = [255, 172, 202]
-  private static readonly GRASS: Rgb = [64, 160, 78]
   private static readonly FIREFLY: Rgb = [206, 255, 120]
   private static readonly HEART: Rgb = [255, 72, 120]
   private static readonly ORANGE: Rgb = [250, 140, 24]
@@ -20,12 +18,6 @@ export class Festive {
   private static readonly FLAG_YELLOW: Rgb = [253, 218, 36]
   private static readonly FLAG_RED: Rgb = [239, 51, 64]
   private static readonly CELEBRATION_MS = 4000
-  private static readonly FLOWERS: readonly Rgb[] = [
-    [255, 150, 196],
-    [250, 250, 255],
-    [255, 222, 90],
-    [196, 160, 255],
-  ]
   private static readonly AUTUMN: readonly Rgb[] = [
     [232, 112, 34],
     [200, 52, 38],
@@ -111,7 +103,6 @@ export class Festive {
     Sprite.of(['..EEE..', '.WEEEE.', 'DDDDDDD', '.SSSSS.']),
   ]
 
-  private static readonly FLOWER = Sprite.of(['.PPP.', 'PPYPP', '.p.p.'])
 
   private static readonly BELL = Sprite.of(['BBW', 'B.B'])
 
@@ -128,10 +119,10 @@ export class Festive {
 
   private static readonly BEAMED = Sprite.of(['...XXXXXX', '...X....X', '...X....X', 'XXXX.XXXX', '.XX...XX.'])
 
-  static ladybug(canvas: Canvas, frame: number): void {
+  static ladybug(canvas: Canvas, frame: number, lift = 0): void {
     const span = canvas.width + 12
     const x = ((frame * 0.3) % span) - 6
-    const y = canvas.height - 3.2
+    const y = canvas.height - 3.2 - lift
     canvas.glow(x, y, 4.4, Festive.SHELL, 0.12)
     const step = Math.sin(frame * 1.4) > 0 ? 0 : 1
     const sprite = Festive.LADYBUG[step] ?? Festive.LADYBUG[0]
@@ -212,28 +203,6 @@ export class Festive {
       const index = flip < 0.45 ? 0 : s > 1.4 ? 2 : 1
       const sprite = Festive.PETAL_SPRITES[index] ?? Festive.PETAL_SPRITES[0]
       if (sprite) Festive.place(canvas, sprite, { P: c, p: Canvas.mix(c, [180, 80, 120], 0.35), W: Canvas.mix(c, Festive.WHITE, 0.6) }, x, y, 1, 1, 0.92)
-    }
-  }
-
-  static meadow(canvas: Canvas, frame: number): void {
-    const h = canvas.height
-    for (let i = 0; i < 16; i++) {
-      const x = ((i + 0.5) / 16) * canvas.width + (Canvas.hash(i, 521) - 0.5) * 3
-      const sway = Math.sin(frame * 0.05 + i * 1.3) * 0.6
-      for (let j = -1; j <= 1; j++) {
-        const height = 1.8 + Canvas.hash(i * 3 + j, 522) * 2
-        const g = Canvas.mix(Festive.GRASS, [140, 214, 96], Canvas.hash(i * 3 + j, 523))
-        Festive.blade(canvas, x + j * 0.5, h, x + j * 1.1 + sway, h - height, g, 0.9)
-      }
-    }
-    for (let i = 0; i < 7; i++) {
-      const x = (0.05 + Canvas.hash(i, 531) * 0.9) * canvas.width
-      const stem = 3 + Canvas.hash(i, 532) * 2
-      const sway = Math.sin(frame * 0.05 + i * 2.1) * 0.7
-      const head: Point = { x: x + sway, y: h - stem }
-      const c = Festive.FLOWERS[i % Festive.FLOWERS.length] ?? Festive.PETAL
-      Festive.blade(canvas, x, h, head.x, head.y, [60, 140, 70], 1)
-      Festive.place(canvas, Festive.FLOWER, { P: c, p: Canvas.mix(c, Festive.INK, 0.25), Y: [255, 206, 80] }, head.x, head.y, 2, 1, 1, false)
     }
   }
 
@@ -352,20 +321,6 @@ export class Festive {
     if (s > 1.15) Festive.dot(canvas, x + dir * 3, y - 2, Canvas.mix(c, Festive.WHITE, 0.6), 0.8)
   }
 
-  static eggs(canvas: Canvas, frame: number): void {
-    const h = canvas.height
-    for (let i = 0; i < 9; i++) {
-      const x = ((i + 0.5) / 9) * canvas.width + (Canvas.hash(i, 571) - 0.5) * 4
-      const s = 0.95 + Canvas.hash(i, 572) * 0.35
-      const rock = Math.max(0, Math.sin(frame * 0.05 + i * 1.9) - 0.8) * 2.5 * Math.sin(frame * 0.6 + i)
-      Festive.egg(canvas, x + rock * 0.3, h - 1.45 * s, s, i)
-      for (let j = -1; j <= 1; j++) {
-        const g = Canvas.mix(Festive.GRASS, [140, 214, 96], Canvas.hash(i * 3 + j, 573))
-        Festive.blade(canvas, x + j * 1.3, h, x + j * 1.9 + Math.sin(frame * 0.05 + i + j) * 0.4, h - 1.4 - Canvas.hash(i * 3 + j, 574) * 1.2, g, 0.9)
-      }
-    }
-  }
-
   static egg(canvas: Canvas, x: number, y: number, s: number, variant: number): void {
     const base = Festive.EGGS[variant % Festive.EGGS.length] ?? Festive.WARN
     const deco = Canvas.mix(Festive.EGGS[(variant + 3) % Festive.EGGS.length] ?? Festive.WHITE, Festive.WHITE, 0.35)
@@ -374,11 +329,78 @@ export class Festive {
     Festive.place(canvas, sprite, { E: base, D: deco, S: Festive.WHITE, W: Canvas.mix(base, Festive.WHITE, 0.6) }, x, y + (s > 1.15 ? 0 : 0.5), 3, 2)
   }
 
-  static lilies(canvas: Canvas, frame: number): void {
-    for (let i = 0; i < 6; i++) {
-      const x = ((i + 0.5) / 6) * canvas.width + (Canvas.hash(i, 581) - 0.5) * 6
-      Festive.sprig(canvas, x, canvas.height + 0.5, 1.15 + Canvas.hash(i, 582) * 0.3, Math.sin(frame * 0.05 + i * 1.7) * 0.5, true)
+  static eggsOn(canvas: Canvas, frame: number, left: number, right: number, top: number, bottom: number): void {
+    const count = Math.max(3, Math.round((right - left) / 9))
+    const rows = Math.max(1, Math.floor(bottom - top))
+    for (let i = 0; i < count; i++) {
+      const x = left + ((i + 0.5) / count) * (right - left) + (Canvas.hash(i, 571) - 0.5) * 4
+      const ground = top + Math.floor(Canvas.hash(i, 575) * rows)
+      const s = 0.95 + Canvas.hash(i, 572) * 0.35
+      const rock = Math.max(0, Math.sin(frame * 0.05 + i * 1.9) - 0.8) * 2.5 * Math.sin(frame * 0.6 + i)
+      canvas.block(Math.round((x - 1.5) * 2) / 2, ground, 3, 1, Festive.INK, 0.28)
+      Festive.egg(canvas, x + rock * 0.3, ground - 1.45 * s, s, i)
     }
+  }
+
+  static vase(canvas: Canvas, frame: number, x: number, deskY: number): void {
+    const glass: Rgb = [196, 230, 244]
+    const water: Rgb = [112, 178, 218]
+    const stem: Rgb = [92, 166, 84]
+    const leaf: Rgb = [48, 146, 70]
+    const vein: Rgb = [120, 200, 120]
+    const bell: Rgb = [250, 252, 240]
+    const sway = Math.round(Math.sin(frame * 0.05) * 0.6)
+    const r = new Raster(-10, -14, 20, 15)
+    r.rect(-5, -5, 3, 1, leaf)
+    r.rect(-4, -6, 2, 1, leaf)
+    r.rect(-3, -4, 2, 1, vein)
+    r.rect(2, -5, 3, 1, leaf)
+    r.rect(2, -6, 2, 1, leaf)
+    r.rect(2, -4, 2, 1, vein)
+    const stems: readonly (readonly [Point, Point, Point, Point, readonly number[]])[] = [
+      [{ x: -1, y: -3 }, { x: -1, y: -8 }, { x: 0, y: -11 }, { x: 4 + sway, y: -9 }, [0.58, 0.76, 0.94]],
+      [{ x: 1, y: -3 }, { x: -2, y: -7 }, { x: -4, y: -10 }, { x: -7 + sway, y: -7 }, [0.66, 0.9]],
+    ]
+    const bells: Point[] = []
+    for (const [p0, p1, p2, p3, at] of stems) {
+      let prev = p0
+      for (let k = 1; k <= 14; k++) {
+        const q = Canvas.bezier(p0, p1, p2, p3, k / 14)
+        r.line(prev.x, prev.y, q.x, q.y, stem)
+        prev = q
+      }
+      for (const t of at) bells.push(Canvas.bezier(p0, p1, p2, p3, t))
+    }
+    r.rect(-3, -3, 6, 3, glass, 0.9)
+    r.rect(-3, -2, 6, 2, water)
+    r.rect(-3, -3, 1, 3, Festive.WHITE, 0.7)
+    r.outline(0.7)
+    for (const q of bells) {
+      r.rect(Math.round(q.x) - 1, Math.round(q.y) + 1, 2, 2, bell)
+      r.dot(Math.round(q.x) - 1, Math.round(q.y) + 2, [206, 224, 200])
+    }
+    r.blit(canvas, x, deskY, 1)
+  }
+
+  static deskFlag(canvas: Canvas, frame: number, x: number, deskY: number): void {
+    const w = 6
+    const h = 4
+    const colors: readonly Rgb[] = [Festive.FLAG_BLACK, Festive.FLAG_YELLOW, Festive.FLAG_RED]
+    const pole: Rgb = [170, 176, 190]
+    const r = new Raster(-2, -10, w * 2 + 4, 12)
+    for (let j = -9; j <= -1; j++) r.dot(0, j, j % 3 === 0 ? Canvas.mix(pole, Festive.WHITE, 0.4) : pole)
+    r.dot(0, -10, Festive.GOLD)
+    for (let i = 0; i < w * 2; i++) {
+      const phase = frame * 0.18 - i * 0.5
+      const wave = Math.round(Math.sin(phase) * (0.1 + i * 0.04))
+      const lit = Math.cos(phase)
+      const third = Math.min(2, Math.floor((i / (w * 2)) * 3))
+      const base = colors[third] ?? Festive.FLAG_YELLOW
+      const c = lit > 0.55 ? Canvas.mix(base, Festive.WHITE, 0.2) : lit < -0.55 ? Canvas.mix(base, Festive.INK, 0.3) : base
+      r.rect(i + 1, -9 + wave, 1, h, c)
+    }
+    r.outline(0.6)
+    r.blit(canvas, x, deskY, 1)
   }
 
   static sprig(canvas: Canvas, x: number, base: number, s: number, sway: number, withLeaves: boolean): void {
@@ -467,38 +489,6 @@ export class Festive {
         if (g === 0) Festive.ray(canvas, a, { x: a.x - Math.cos(angle) * 2, y: a.y - Math.sin(angle) * 2 }, [170, 176, 192], 1, 1)
       }
     }
-  }
-
-  static nationalFlag(canvas: Canvas, frame: number, obstacles: readonly Obstacle[]): void {
-    const y0 = 3
-    const w = 14
-    const h = 8
-    const home = canvas.width - 20
-    const fits = (x: number): boolean => obstacles.every(o => x + w + 1 <= o.x || x - 1 >= o.x + o.w || y0 + h + 7 <= o.y || y0 - 2 >= o.y + o.h)
-    let x0 = home
-    for (let k = 1; !fits(x0) && k <= 120; k++) {
-      const step = (home - 2) / 120
-      if (home - k * step >= 2 && fits(home - k * step)) x0 = home - k * step
-      else if (home + k * step <= canvas.width - w - 2 && fits(home + k * step)) x0 = home + k * step
-    }
-    x0 = Math.round(x0 * 2) / 2
-    const colors: readonly Rgb[] = [Festive.FLAG_BLACK, Festive.FLAG_YELLOW, Festive.FLAG_RED]
-    const pole: Rgb = [170, 176, 190]
-    const r = new Raster(-3, -3, w * 2 + 6, h + 12)
-    for (let j = -1; j <= h + 7; j++) r.dot(-1, j, j % 3 === 0 ? Canvas.mix(pole, Festive.WHITE, 0.4) : pole)
-    r.rect(-2, -2, 2, 1, Festive.GOLD)
-    for (let i = 0; i < w * 2; i++) {
-      const phase = frame * 0.18 - i * 0.275
-      const wave = Math.round(Math.sin(phase) * (0.2 + i * 0.035))
-      const lit = Math.cos(phase)
-      const third = Math.min(2, Math.floor((i / (w * 2)) * 3))
-      const base = colors[third] ?? Festive.FLAG_YELLOW
-      const c = lit > 0.55 ? Canvas.mix(base, Festive.WHITE, third === 0 ? 0.22 : 0.18) : lit < -0.55 ? Canvas.mix(base, Festive.INK, 0.3) : base
-      r.rect(i, wave, 1, h, c)
-    }
-    r.outline(0.6)
-    canvas.glow(x0 + w * 0.5, y0 + h * 0.5, w * 0.7, Festive.FLAG_YELLOW, 0.06)
-    r.blit(canvas, x0, y0, 1)
   }
 
   static confetti(canvas: Canvas, s: number, seed: number, frame: number): void {
