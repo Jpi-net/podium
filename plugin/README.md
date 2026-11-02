@@ -60,6 +60,16 @@ It stores its own settings (fps, notifications, accessory, time per work item) i
 
 **Nothing leaves the machine**: no network access, no telemetry.
 
+**Events it hooks.** The panel only observes Claude Code: it never changes, blocks or answers anything but its own two commands.
+
+| Event | What Podium does |
+|---|---|
+| `session.start` | registers `/podium` and `/podium-stage`, loads the project's `.claude/`, opens the panel |
+| `command.run` for `/podium` and `/podium-stage` only | answers its own commands; other commands are not touched |
+| `tool.call`, `agent.spawn`, `turn.complete`, `prompt.submit` | records what happened to draw the flow, then passes the event on unchanged |
+| `session.attach`, `ui.close` | places or forgets the panel, then passes the event on unchanged |
+| `ui.render` for its own panel | draws the panel |
+
 **`/podium`** is a shortcut: it runs the plugin's own skill `/podium:setup` with the same arguments. If that cannot start, it fills your prompt with `/podium:setup <arguments>` and you decide whether to send it.
 
 **`/podium:setup`** writes only `.claude/`, optionally `CLAUDE.md` and `.git/info/exclude`, after you validate its proposal. See [What the generated hooks do](#what-the-generated-hooks-do).
