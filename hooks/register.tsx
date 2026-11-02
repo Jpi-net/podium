@@ -198,6 +198,7 @@ class Runtime {
   static isRenderForced = false
   static scrollOffset = 0
   static isPlaced = false
+  static isWanted = false
   static openAttempts = 0
   static missingSince = new Map<string, number>()
   static ports: Io | undefined
@@ -1460,7 +1461,12 @@ class Flow {
     return buckets
   }
 
+  static mayAutoOpen(): boolean {
+    return Runtime.isWanted || Runtime.project.hasManifest
+  }
+
   static async openPane(): Promise<boolean> {
+    Runtime.isWanted = true
     if (Runtime.view.isClosed) await Flow.setView(v => ({ ...v, isClosed: false }))
     return Flow.placePane()
   }
@@ -1476,7 +1482,7 @@ class Flow {
   }
 
   static async ensurePane(): Promise<void> {
-    if (Runtime.isPlaced || Runtime.view.isClosed || Runtime.openAttempts >= Flow.MAX_OPEN_ATTEMPTS) return
+    if (Runtime.isPlaced || Runtime.view.isClosed || !Flow.mayAutoOpen() || Runtime.openAttempts >= Flow.MAX_OPEN_ATTEMPTS) return
     await Flow.placePane()
   }
 
@@ -2890,6 +2896,7 @@ export const register: Register = on => {
     Runtime.tickMs = 0
     Runtime.layoutAt = 0
     Runtime.lastBlitAt = 0
+    Runtime.isWanted = false
     await $.command.register({
       name: 'maestro-stage',
       description: 'Live side panel of the agents (tabs: flow, delivery, history, context, tools; reset to clear)',
@@ -2978,7 +2985,7 @@ export const register: Register = on => {
     } catch {
       Runtime.timers = []
     }
-    if (!Runtime.view.isClosed) void Flow.openPane()
+    if (!Runtime.view.isClosed && Flow.mayAutoOpen()) void Flow.placePane()
     return next(e)
   })
 
@@ -3084,7 +3091,7 @@ export const register: Register = on => {
   })
 
   on('prompt.submit', async ($, e, next) => {
-    if (!Runtime.isPlaced && !Runtime.view.isClosed && e.isMeta !== true && !Flow.isTaskNotification(e)) {
+    if (!Runtime.isPlaced && !Runtime.view.isClosed && Flow.mayAutoOpen() && e.isMeta !== true && !Flow.isTaskNotification(e)) {
       try {
         const opened = await $.ui.open({ id: PANE, title: 'Maestro', backgroundColor: Theme.BACKDROP, columns: 84 })
         Runtime.isPlaced = opened.isPlaced
@@ -3111,7 +3118,7 @@ export const register: Register = on => {
 
   on('session.attach', async ($, e, next) => {
     const r = await next(e)
-    if (e.surface === 'terminal' && !Runtime.view.isClosed && !Runtime.isPlaced) {
+    if (e.surface === 'terminal' && !Runtime.view.isClosed && !Runtime.isPlaced && Flow.mayAutoOpen()) {
       Runtime.openAttempts = 0
       void Flow.placePane()
     }

@@ -94,6 +94,8 @@ Without a manifest the panel still works: roles are guessed from command names, 
 
 `/maestro-stage [flow|delivery|history|context|tools]` opens the panel; keys `1` to `5` switch views when it has focus.
 
+The panel opens by itself only in a project that has a `.claude/maestro.json` (after `/maestro`). Anywhere else it stays closed until you run `/maestro-stage`, so installing the plugin for every project adds nothing to repositories that do not use it. Closing it keeps it closed for the session.
+
 1. **Flow**: phase strip, animated graph from the orchestrator to its subagents, what blocks (a failing verification with its error excerpt, a failed review, broken rules), running and finished agents, delivery state.
 2. **Delivery**: ready-to-deliver verdict and ordered to-do list, verification steps, reviews and findings, broken rules (`h` explains, `x` clears), commits per layer, branches of the work item.
 3. **History**: filtered journal, or swimlanes with replay.

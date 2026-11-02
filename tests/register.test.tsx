@@ -18,7 +18,7 @@ const PANE = {
 
 const VIEWPORT = { columns: 120, rows: 50 }
 
-type Sink = { notifications: string[]; copies: string[]; files?: Record<string, string>; stored?: Record<string, unknown>; fetchAgeMs?: number; isBare?: boolean }
+type Sink = { notifications: string[]; copies: string[]; files?: Record<string, string>; stored?: Record<string, unknown>; fetchAgeMs?: number; isBare?: boolean; opens?: number }
 
 class Engine {
   static spawn(subagentType: string, description: string): AgentSpawnInput {
@@ -51,7 +51,10 @@ class Engine {
       return { value: { isCopied: true } }
     })
     on('command.register', () => ({ value: { command: 'maestro-stage' } }))
-    on('ui.open', () => ({ value: { isPlaced: true } }))
+    on('ui.open', () => {
+      sink.opens = (sink.opens ?? 0) + 1
+      return { value: { isPlaced: true } }
+    })
     on('session.start', (_, e) => ({ cwd: e.cwd }))
     on('agent.list', () => ({ value: [] }))
     on('fs.list', () => ({ value: [] }))
@@ -1406,4 +1409,33 @@ test('an idle Flow lists all the project commands, clickable', async ($, on) => 
   expect(await ui.find({ type: 'Text', text: /Project commands/ })).toBeDefined()
   expect(filled).toEqual(['/faq '])
   await ui.unmount()
+})
+
+test('the panel does not open by itself in a project without a maestro manifest', async ($, on) => {
+  // Arrange
+  const sink: Sink = { notifications: [], copies: [], isBare: true }
+  Engine.stub(on, true, 'main', () => undefined, sink)
+
+  // Act
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await $.prompt.submit({ text: 'hello' })
+  const before = sink.opens ?? 0
+  const answer = await $.command.run({ command: 'maestro-stage', args: '' })
+
+  // Assert
+  expect(before).toBe(0)
+  expect(sink.opens).toBe(1)
+  expect(answer.text).toContain('Maestro opened')
+})
+
+test('the panel opens by itself in a project set up with a maestro manifest', async ($, on) => {
+  // Arrange
+  const sink: Sink = { notifications: [], copies: [] }
+  Engine.stub(on, true, 'main', () => undefined, sink)
+
+  // Act
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+
+  // Assert
+  expect(sink.opens ?? 0).toBeGreaterThan(0)
 })
