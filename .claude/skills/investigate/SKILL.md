@@ -10,7 +10,7 @@ Read-only on the repository: no edit, no branch switch, no commit. Throwaway scr
 
 ## Phase 1: Context
 1. Issue if a number is given: `gh issue view <number>`.
-2. Launch `debugger` with the symptom, the issue content, the pasted traces, the branch, and the mission: root cause with evidence, data path end to end (engine event → `hooks/register.tsx` → module → `$.state` → render, or hook stdin → `.mjs` → JSON decision), origin commit, impacted releases (`git tag`, CHANGELOG), cheap local reproduction (`claude plugin test .` filter or a hook replay), the failing test in `tests/` that would prove it, 1-3 fix options, siblings with the same defect, confidence.
+2. Launch `debugger` with the symptom, the issue content, the pasted traces, the branch, and the mission: root cause with evidence, data path end to end (engine event → `plugin/hooks/register.tsx` → module → `$.state` → render, or hook stdin → `.mjs` → JSON decision), origin commit, impacted releases (`git tag`, CHANGELOG), cheap local reproduction (`claude plugin test plugin` filter or a hook replay), the failing test in `plugin/tests/` that would prove it, 1-3 fix options, siblings with the same defect, confidence.
 
 ## Phase 2: Gaps
 Low confidence because only the user knows a fact (OS, Claude Code version, the affected project's manifest): ask with AskUserQuestion (one call, recommended option first), then relaunch `debugger` with its previous report and the answers.

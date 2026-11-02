@@ -23,8 +23,8 @@ For a PR from a fork, fetch `pull/<number>/head` instead of `<source>`.
 ## Phase 3: Reviews (one message, in parallel)
 In the worktree:
 - `code-reviewer` always.
-- `security-reviewer` when the diff touches `skills/setup/templates/hooks/**`, `skills/setup/templates/settings.json.tmpl`, `$.process.run` / `$.fs` / `$.prompt` usage in `hooks/`, or permissions.
-- `lint-runner` on the changed areas: `claude plugin validate .`, `claude plugin test .` when `hooks/`, `types/` or `tests/` changed, `node --check` on each changed `skills/setup/templates/hooks/*.mjs`.
+- `security-reviewer` when the diff touches `plugin/skills/setup/templates/hooks/**`, `plugin/skills/setup/templates/settings.json.tmpl`, `$.process.run` / `$.fs` / `$.prompt` usage in `plugin/hooks/`, or permissions.
+- `lint-runner` on the changed areas: `claude plugin validate plugin`, `claude plugin test plugin` when `plugin/hooks/`, `plugin/types/` or `plugin/tests/` changed, `node --check` on each changed `plugin/skills/setup/templates/hooks/*.mjs`.
 
 ## Phase 4: Report
 Ranked findings (Blocking > Major > Minor), each with `file:line`, why, the exact fix, and a ready-to-paste comment in English. Points already raised in existing comments are not repeated. Missing Checks (no test, CHANGELOG `[Unreleased]` not updated on a behaviour change) are findings.

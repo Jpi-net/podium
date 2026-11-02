@@ -97,31 +97,31 @@
   "layers": [
     {
       "name": "Tests",
-      "pattern": "^tests/"
+      "pattern": "^plugin/tests/"
     },
     {
       "name": "Panel",
-      "pattern": "^(hooks|types)/"
+      "pattern": "^plugin/(hooks|types)/"
     },
     {
       "name": "Setup skill",
-      "pattern": "^skills/"
+      "pattern": "^plugin/skills/"
     },
     {
       "name": "Plugin and CI",
-      "pattern": "^(\\.claude-plugin/|\\.github/|\\.editorconfig$|\\.gitattributes$|\\.gitignore$|tsconfig\\.json$|LICENSE$)"
+      "pattern": "^(\\.claude-plugin/|plugin/\\.claude-plugin/|\\.github/|\\.editorconfig$|\\.gitattributes$|\\.gitignore$|plugin/tsconfig\\.json$|plugin/LICENSE$|LICENSE$)"
     },
     {
       "name": "Documentation",
-      "pattern": "^(README|CHANGELOG|CONTRIBUTING|SECURITY)\\.md$|^assets/"
+      "pattern": "^(README|CHANGELOG|CONTRIBUTING|SECURITY)\\.md$|^plugin/README\\.md$|^plugin/assets/"
     }
   ],
   "code": {
-    "roots": "^(hooks|types|tests|skills/setup/templates/hooks)/",
+    "roots": "^plugin/(hooks|types|tests|skills/setup/templates/hooks)/",
     "extensions": "\\.(ts|tsx|mjs)$",
     "ignore": "(^|/)(node_modules|\\.claude-plugin/types|\\.claude|\\.mcpb-cache)/"
   },
-  "generated": "^\\.claude-plugin/types/",
+  "generated": "^plugin/\\.claude-plugin/types/",
   "checks": {
     "comments": true,
     "noFreeFunction": true,
@@ -148,11 +148,11 @@
     "prDraft": false,
     "commentAllow": "^\\s*//\\s*(Arrange|Act|Assert)\\b",
     "partitions": {
-      "panel-expert": "^(hooks|types)/",
-      "setup-expert": "^skills/",
-      "test-expert": "^tests/",
-      "doc-writer": "^(README|CHANGELOG|CONTRIBUTING|SECURITY)\\.md$|^assets/",
-      "devops": "^(\\.github/|\\.claude-plugin/(?!types/)|\\.editorconfig$|\\.gitattributes$|\\.gitignore$|tsconfig\\.json$|LICENSE$)"
+      "panel-expert": "^plugin/(hooks|types)/",
+      "setup-expert": "^plugin/skills/",
+      "test-expert": "^plugin/tests/",
+      "doc-writer": "^(README|CHANGELOG|CONTRIBUTING|SECURITY)\\.md$|^plugin/README\\.md$|^plugin/assets/",
+      "devops": "^(\\.github/|\\.claude-plugin/|plugin/\\.claude-plugin/(?!types/)|plugin/tsconfig\\.json$|plugin/LICENSE$|\\.editorconfig$|\\.gitattributes$|\\.gitignore$|LICENSE$)"
     },
     "readOnlyAgents": [
       "architect",
@@ -170,17 +170,17 @@
   },
   "generatedFiles": {
     ".claude/.gitignore": "0d82cd1b373cb574582b2396826d622e577a13ace9dadc6eea2afbee77e90fb9",
-    ".claude/CLAUDE.md": "ae76da060ff366a9cf342d3defe781950e7af841665eb0515f399ef06214abe7",
-    ".claude/agents/architect.md": "e884f538b73ccac89e74c6d8f4631c3fca3f1d1c45a4d6334a212b568ebef20a",
-    ".claude/agents/code-reviewer.md": "b4c904602e40f672e7461bf511413b97585a4e0454d66cf1bd1c1f59442ec4a8",
-    ".claude/agents/debugger.md": "2fbaaf2106d3a06ad633456cb2591f5f8e2d7483548cd07cc26460090c7cb349",
-    ".claude/agents/devops.md": "5cc1f0a49bacbae2da1e78550876611b202752cef29bf493fb187709e3734dc6",
-    ".claude/agents/doc-writer.md": "52ef018618b1992e78ac1a294e039e55b92dcfd591cf3519c2bb380018eef830",
-    ".claude/agents/lint-runner.md": "40a1ec81e71419063e07df8010be8fb8c62bc9580aa0117fcb28e59e9d9df7a1",
-    ".claude/agents/panel-expert.md": "0f19ae7d0ac52ca63407ce4ebd2e431d34c7a63a746cf7df88cf1b0b111d45aa",
-    ".claude/agents/security-reviewer.md": "f1feb30d8194683a5a4da4905fd509759b82b0dd856e68c0ed785072ec154d82",
-    ".claude/agents/setup-expert.md": "77352ba1f9267200089de0373184205fdc5778b822b24ab60e2c6f7e2013307a",
-    ".claude/agents/test-expert.md": "f885d1107ecdfe22d85dfbf1e0425f45bfc8fcdc60ecd2c819f582519bf66e5f",
+    ".claude/CLAUDE.md": "56c19926060e0a3181c75bcb97e43f66b5ee2946974ffcb5ff417217dc8d2e61",
+    ".claude/agents/architect.md": "94875b84013175196ef5bac9ec223021ebcbd33ad1d548e5de03ed03998265ab",
+    ".claude/agents/code-reviewer.md": "739f45c2b34cc3b950a01e3a33bde82ffb27babae16c84884b2c0d40cbcd48a8",
+    ".claude/agents/debugger.md": "3353bd275509c54de600e9dd06a0975a6e401d99565c7291ce84f31c2ba65965",
+    ".claude/agents/devops.md": "630e3c284d65ef872146d416cae79ddfb9f96fe76694db593065be94652b96c0",
+    ".claude/agents/doc-writer.md": "3ea160b66cf6f76a1684f9f319de2f70c4bb34b60f516cde6bb076ef4f3aadd3",
+    ".claude/agents/lint-runner.md": "0736f73dc59a5ce67701fd5f01af34c375a6d218afc44c5d8985eb384173a38c",
+    ".claude/agents/panel-expert.md": "be0a691e5befc83cbba5d17c19209ebe36d711281097931878bac1fce514a154",
+    ".claude/agents/security-reviewer.md": "9e33c101257184fdb1107d91f423427f87bd15aefb89b32da0b6dcb159683162",
+    ".claude/agents/setup-expert.md": "31d7b6077aa1aa9174a0d16ac2fa125795036bf9f48e18af1ba579ccbbc5a15a",
+    ".claude/agents/test-expert.md": "925776af2f75e6cb592c95cc9f31c97c5abb0660c41ee41b2ce4974bebac6100",
     ".claude/hooks/guard-bash.mjs": "7770709578faaf005afb1075b2d8e2e18af65a0daa0e581e44fbc1dd2d62dc49",
     ".claude/hooks/guard-git.mjs": "41037af44c53848dcb66bf19181d3ecc4fdcbd5c910aec56351dead517eb3805",
     ".claude/hooks/guard-ownership.mjs": "6ea1a6ff39d92febab5cc2899ff422541e9c521600080ed9be8e0132b62d8fa0",
@@ -188,19 +188,19 @@
     ".claude/hooks/post-edit.mjs": "1618936080ec0ee6e0fe5d4b8d78f1713ad2b278b683afeb9f86396995498a28",
     ".claude/hooks/session-start.mjs": "fc3fc7126166f56d48db2d60a19ac9134b2610d17157a12bb03bce5120584d03",
     ".claude/hooks/stop-check.mjs": "aa4c45b13b35ae5188fbaf9943b0ac228b5a073a373098dede35e09eebe82c17",
-    ".claude/review-learnings.md": "13a10b4460612e8be6fed455f6e598301862dd88c4d63e3bad25d7b8c638298e",
-    ".claude/rules/docs-release.md": "1bc16a4b20215517efee9bd96ce264f01ed775ceed83c0638631c6abb0cb1df9",
-    ".claude/rules/git-workflow.md": "129f473f0954944b5637cd97a475d42b0ff1f6ea4655d307ebb69df149e7b6f4",
-    ".claude/rules/panel.md": "9ad5edc3752243fa3aa89204b5f8b3afbf2ddb778f136291fd901f5cae2beaee",
-    ".claude/rules/setup-skill.md": "02e1053524044dbec4dade71886bc56b35e1e7acaf79a9cb2ff41a1eb973e0f4",
-    ".claude/rules/tests.md": "764d5befd1b3dbd7de70ad2a94655037048868955484a65a6ef9df8e15380bc1",
+    ".claude/review-learnings.md": "c4560206aff5d2d7e2ea447cfe04043e65cc11c9193fbf0e94f0da07e17b961f",
+    ".claude/rules/docs-release.md": "da5ecec3898dc76350f361b052e294242c09c1217d3df622064472369c91e943",
+    ".claude/rules/git-workflow.md": "7b4fca642d5aea1d28a727a6a1ec578843be31c04f68ac649815948db2f8b324",
+    ".claude/rules/panel.md": "916cd474a28415a69d3de0b7d18d6b7491bb2a690e302ef030845488360b5ed4",
+    ".claude/rules/setup-skill.md": "0ee1011d26dd0eb53f106cd0b869d41b9443c6326098c3601a52542afbfb44ff",
+    ".claude/rules/tests.md": "5a04c0645ddd5f6c982b59f4f7907b4d64e8adb861a6233917e7f0ac6eaf9106",
     ".claude/settings.json": "c0b285f81b6f9000137de1a0242c7f14c3c2037c140b8e2500d1e24f547498f6",
-    ".claude/skills/deliver/SKILL.md": "20636ce76bb1c0426b6ef58fd91ac1082d2c4c7e59b8ffb8178e5bc70f997a61",
-    ".claude/skills/faq/SKILL.md": "9a9623874ae0a27e0f289209947d52807559b2f31487d106c801dd561fca2438",
-    ".claude/skills/feat/SKILL.md": "34b19d343f557841d12e96e2c81f5e18e2cd058ff3435d0e21724b6ed5be1120",
-    ".claude/skills/fix/SKILL.md": "47bab236179c16ecc41e885938e145c2032b4d9cfe7ffaa4dc38fd57ba15e537",
-    ".claude/skills/investigate/SKILL.md": "b21f30812b1cd0b10575ecaea71483e7b797af43c2ea440ad7c17caa93f23f06",
+    ".claude/skills/deliver/SKILL.md": "8414969dffe2a67340e857a407db66902c79020258ed6455f07c37904fb21fb9",
+    ".claude/skills/faq/SKILL.md": "937fb6de1998f773e67d19c4d8c384ba37c77e7e86d0e7655d3a98fb2cd1bdb1",
+    ".claude/skills/feat/SKILL.md": "b65959e8ef638b336918f1a58ae63953d1adc66b209684c343a90f5d87d6d811",
+    ".claude/skills/fix/SKILL.md": "9953b7a4709488bf868f6e223e1112fdba68b7b29efe521c5528979d8e188b98",
+    ".claude/skills/investigate/SKILL.md": "3bff09cb2cdff869f44008e0957c990ad8ceae05899ff42699e673f89861f9ae",
     ".claude/skills/pr-comments/SKILL.md": "29d8d101ac4d37492fb6cb59ab917217a4f76d50636a9f862fa2a9949864bb42",
-    ".claude/skills/review-pr/SKILL.md": "d5a6490d24814fa1a919d729f4cf6b12e31f91be19a4d89d84db900fdde15f24"
+    ".claude/skills/review-pr/SKILL.md": "2176c4c4b4021005527cf5d481e9714b0ce6e252447a0d3078122d853ceae6c4"
   }
 }

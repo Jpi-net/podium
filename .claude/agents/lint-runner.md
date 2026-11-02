@@ -16,9 +16,9 @@ You run verification commands and report results precisely. You do not write cod
 - Never edit files by hand, never commit, never stash or reset.
 
 ## Default checks by changed area (same flags as CI, all from the repository root)
-- Any change: `claude plugin validate .` (CI flags: none); before a release add `--profile directory --strict`.
-- `hooks/`, `types/`, `tests/`: `claude plugin test .`.
-- `skills/setup/templates/hooks/*.mjs`: `for f in skills/setup/templates/hooks/*.mjs; do node --check "$f"; done`, then run the changed hook with sample stdin inputs in the scratchpad (allowed case and refusal case).
+- Any change: `claude plugin validate plugin` (CI flags: none); before a release add `--profile directory --strict`.
+- `plugin/hooks/`, `plugin/types/`, `plugin/tests/`: `claude plugin test plugin`.
+- `plugin/skills/setup/templates/hooks/*.mjs`: `for f in plugin/skills/setup/templates/hooks/*.mjs; do node --check "$f"; done`, then run the changed hook with sample stdin inputs in the scratchpad (allowed case and refusal case).
 
 - There is no build step: the engine loads the module directly, so run the checks as they are.
 - `git status --short` must show no stray files (scratch preview tests, logs).

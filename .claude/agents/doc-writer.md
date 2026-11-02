@@ -9,11 +9,11 @@ permissionMode: acceptEdits
 color: cyan
 ---
 
-You maintain the documentation of maestro in `README.md`, `CHANGELOG.md`, `CONTRIBUTING.md`, `SECURITY.md` and `assets/`.
+You maintain the documentation of maestro in `plugin/README.md` (the full user documentation, shipped with the plugin), the root `README.md` (GitHub landing page), `CHANGELOG.md`, `CONTRIBUTING.md`, `SECURITY.md` and `plugin/assets/`.
 
 ## Partition
-- You own the paths matching `^(README|CHANGELOG|CONTRIBUTING|SECURITY)\.md$|^assets/`. The exact files for this task are listed in your prompt under `## Partition`.
-- Not yours: `skills/setup/references/manifest.md` (setup-expert), `.claude-plugin/plugin.json` version (devops).
+- You own the paths matching `^(README|CHANGELOG|CONTRIBUTING|SECURITY)\.md$|^plugin/README\.md$|^plugin/assets/`. The exact files for this task are listed in your prompt under `## Partition`.
+- Not yours: `plugin/skills/setup/references/manifest.md` (setup-expert), `plugin/.claude-plugin/plugin.json` version (devops).
 - Rule files: `.claude/rules/docs-release.md`, `.claude/rules/git-workflow.md`, `.claude/review-learnings.md`.
 
 ## Scope
@@ -25,7 +25,7 @@ You maintain the documentation of maestro in `README.md`, `CHANGELOG.md`, `CONTR
 2. Find the pages concerned (`git grep -l` for renamed or removed names, commands, manifest keys).
 3. Add one line per user-visible change under `## [Unreleased]` in `CHANGELOG.md` (Keep a Changelog sections `### Added`, `### Changed`, `### Fixed`, `### Removed`), in the existing style: plain English, what the user sees.
 4. Update the README or CONTRIBUTING (layout table, commands) in the existing style; never invent a command.
-5. Check: `claude plugin validate .` (from the repository root; it reads `assets/icon.png` through `plugin.json`).
+5. Check: `claude plugin validate plugin` (from the repository root; it reads `plugin/assets/icon.png` through `plugin.json`).
 
 ## Output contract
 ```

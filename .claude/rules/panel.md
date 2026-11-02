@@ -1,20 +1,20 @@
 ---
 paths:
-  - "hooks/**"
-  - "types/**"
+  - "plugin/hooks/**"
+  - "plugin/types/**"
 ---
 # Panel (TypeScript hooks module run by the Claude Code plugin engine)
 
 ## Stack
-- TypeScript loaded directly by the Claude Code plugin engine: no package.json, no build step, no npm dependency. `hooks/hooks.json` lists the module (`./register.tsx`).
+- TypeScript loaded directly by the Claude Code plugin engine: no package.json, no build step, no npm dependency. `plugin/hooks/hooks.json` lists the module (`./register.tsx`).
 - No Node and no DOM at runtime: everything outside the module goes through `$` (`$.process.run`, `$.fs`, `$.ui`, `$.state`, `$.store`, `$.clock`). JSX compiles against the global `h`; elements come from `$.ui.resolve(e)`.
-- `tsconfig.json` extends `./.claude-plugin/types/tsconfig.json`, written by the engine on load (gitignored, never edited).
+- `plugin/tsconfig.json` extends `./.claude-plugin/types/tsconfig.json`, written by the engine on load (gitignored, never edited).
 
 ## Structure
-- `hooks/register.tsx`: entry point; commands, event hooks (`tool.call`, `prompt.submit`, `agent.spawn`…), the `/maestro-stage` panel. Internal classes `Runtime` (state, `Runtime.io` wrapping `$`, `Runtime.graphCache`), `Flow`, `View`, `Recap`.
-- `hooks/project.ts`: the `Manifest` type and reading of `.claude/maestro.json` and the project's `.claude/`; `hooks/rules.ts`: rule checks.
-- Scene: `hooks/scene.ts` composes `office.ts`, `colleagues.ts`, `robots.ts`, `weather.ts`, `night.ts`, `festive.ts`, `hats.ts`, `accessories.ts`, `effects.ts`, `avatar.ts` on a `Canvas` (`canvas.ts`), with `Raster`/`Sprite`/`Motion` (`sprite.ts`), `font.ts`, `theme.ts`.
-- `types/index.d.ts`: exported flow types and `declare module 'claude-code' { interface PluginState { … } }`. Every `$.state` key is declared there; `claude plugin validate .` checks it.
+- `plugin/hooks/register.tsx`: entry point; commands, event hooks (`tool.call`, `prompt.submit`, `agent.spawn`…), the `/maestro-stage` panel. Internal classes `Runtime` (state, `Runtime.io` wrapping `$`, `Runtime.graphCache`), `Flow`, `View`, `Recap`.
+- `plugin/hooks/project.ts`: the `Manifest` type and reading of `.claude/maestro.json` and the project's `.claude/`; `plugin/hooks/rules.ts`: rule checks.
+- Scene: `plugin/hooks/scene.ts` composes `office.ts`, `colleagues.ts`, `robots.ts`, `weather.ts`, `night.ts`, `festive.ts`, `hats.ts`, `accessories.ts`, `effects.ts`, `avatar.ts` on a `Canvas` (`canvas.ts`), with `Raster`/`Sprite`/`Motion` (`sprite.ts`), `font.ts`, `theme.ts`.
+- `plugin/types/index.d.ts`: exported flow types and `declare module 'claude-code' { interface PluginState { … } }`. Every `$.state` key is declared there; `claude plugin validate plugin` checks it.
 - Dependency direction: `register.tsx` imports the scene and project modules; scene modules never import `register.tsx` and never touch `$`.
 
 ## Conventions
@@ -29,22 +29,22 @@ paths:
 - Zero comments in new code, except the allowed markers: `// Arrange`, `// Act`, `// Assert` markers in tests.
 
 ## Reference implementations
-- `hooks/office.ts`: a drawing class (palette constants, `room` returning a typed layout, `back`/`desk` drawing with a light factor).
-- `hooks/colleagues.ts`: sprites, deterministic looks from a seed, union types for variants.
-- `hooks/rules.ts`: rule checks over the project's files.
+- `plugin/hooks/office.ts`: a drawing class (palette constants, `room` returning a typed layout, `back`/`desk` drawing with a light factor).
+- `plugin/hooks/colleagues.ts`: sprites, deterministic looks from a seed, union types for variants.
+- `plugin/hooks/rules.ts`: rule checks over the project's files.
 
 ## Tests
-- Every change ships with a test in `tests/<module>.test.ts` (render tests through `register.tsx` in `.test.tsx`), owned by test-expert; see `tests.md`.
+- Every change ships with a test in `plugin/tests/<module>.test.ts` (render tests through `register.tsx` in `.test.tsx`), owned by test-expert; see `tests.md`.
 - To preview a scene, temporarily capture the canvas buffer in a scratch test; never commit it.
 
 ## Commands (from the repository root)
 ```bash
-claude plugin validate .
-claude plugin test .
-claude --plugin-dir . --debug
+claude plugin validate plugin
+claude plugin test plugin
+claude --plugin-dir plugin --debug
 ```
 
 ## Pitfalls
-- A `$.state` key not declared in `types/index.d.ts` fails `claude plugin validate .`.
+- A `$.state` key not declared in `plugin/types/index.d.ts` fails `claude plugin validate plugin`.
 - A throw in a `tool.call` or `prompt.submit` hook would block the user's session if not caught before `next(e)`.
 - Half-unit coordinates are valid only on the quad grid; misaligned blocks blur the sprite.

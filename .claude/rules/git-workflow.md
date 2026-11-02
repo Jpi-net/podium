@@ -13,8 +13,8 @@
 - Format: a short imperative subject with a capital first letter, no type prefix, no trailing period, at most 72 characters (`Seat the orchestrator at a desk in an office`); an optional body says why, wrapped at 72. Release commits: `Release x.y.z`.
 - Granularity:
   - Narrow change (one or two layers, about 10 files or fewer): ONE commit, tests included.
-  - Feature or multi-layer change: one commit per layer in dependency order (`types/` and `hooks/` with their `tests/`, then `skills/setup/`, then docs and manifests).
-  - Each commit passes `claude plugin validate .` and `claude plugin test .`. If a split would break them, merge the adjacent layers.
+  - Feature or multi-layer change: one commit per layer in dependency order (`plugin/types/` and `plugin/hooks/` with their `plugin/tests/`, then `plugin/skills/setup/`, then docs and manifests).
+  - Each commit passes `claude plugin validate plugin` and `claude plugin test plugin`. If a split would break them, merge the adjacent layers.
 - Never `--no-verify`. Never amend or rewrite pushed commits. Never force-push.
 
 ## Pull requests
@@ -27,5 +27,5 @@
 - Tags are `vx.y.z` on the `Release x.y.z` commit; never move or delete a published tag. Steps in `docs-release.md`.
 
 ## Never
-- Commit secrets, `.claude/settings.local.json`, `.claude-plugin/types/`, scratch preview tests or unrelated changes.
+- Commit secrets, `.claude/settings.local.json`, `plugin/.claude-plugin/types/`, scratch preview tests or unrelated changes.
 - Delete remote branches, reset shared work, or bypass git hooks.

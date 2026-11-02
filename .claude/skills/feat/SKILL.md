@@ -21,15 +21,15 @@ Ambiguous scope, panel behaviour (what the office shows, when), manifest key or 
 
 ## Phase 3: Plan (user validation required)
 1. Launch `architect` with the issue, the user's context and the branch.
-2. Present the plan concisely: summary, layers and files (`hooks/`, `types/index.d.ts`, `skills/setup/`, `tests/`, docs, `.claude-plugin/`), contracts (new `$.state` keys, `Manifest` type in `hooks/project.ts` and `skills/setup/references/manifest.md`, new placeholders in `skills/setup/templates/README.md`), partition, tests, commits, risks.
+2. Present the plan concisely: summary, layers and files (`plugin/hooks/`, `plugin/types/index.d.ts`, `plugin/skills/setup/`, `plugin/tests/`, docs, `.claude-plugin/`), contracts (new `$.state` keys, `Manifest` type in `plugin/hooks/project.ts` and `plugin/skills/setup/references/manifest.md`, new placeholders in `plugin/skills/setup/templates/README.md`), partition, tests, commits, risks.
 3. Validate / Adjust / Cancel with AskUserQuestion; iterate. Nothing is written before validation.
 4. Write the flow file `.claude/flows/<branch with / replaced by __>.md` (plan, partition, phase checklist) and tick it at each phase.
 
 ## Phase 4: Implementation (parallel, partitioned)
 - Launch all experts of a wave in ONE message. Each prompt: summary, shared contracts, `## Partition` (its exact files), tasks, the rule files to read (`panel-expert` → `.claude/rules/panel.md`, `setup-expert` → `.claude/rules/setup-skill.md`, `test-expert` → `.claude/rules/tests.md`, `doc-writer` and `devops` → `.claude/rules/docs-release.md`; all → `.claude/rules/git-workflow.md` and `.claude/review-learnings.md`), and the reminder to touch only its files and report needs outside them.
-- `tests/**` (`test-expert`) is in the wave after the `hooks/` code it tests.
+- `plugin/tests/**` (`test-expert`) is in the wave after the `plugin/hooks/` code it tests.
 - Cross-partition needs go to the owner in the next round. Never two agents on the same file.
-- Never assign `.claude-plugin/types/`: the engine writes it.
+- Never assign `plugin/.claude-plugin/types/`: the engine writes it.
 
 ## Phase 5 → 6: Verification, reviews, delivery
 Invoke `deliver` with: type `feature`, the issue number, the target `main`, the validated plan.

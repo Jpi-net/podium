@@ -8,7 +8,7 @@ argument-hint: "<#issue | bug description> [stack trace]"
 
 You are the ORCHESTRATOR. Talk to the user in the user's language, delegate, integrate.
 
-Arguments: `$ARGUMENTS`. A leading `#<number>` is a GitHub issue; the rest (and anything pasted: engine debug output from `claude --plugin-dir . --debug`, hook stdin, panel screenshot) is the bug description, which has priority.
+Arguments: `$ARGUMENTS`. A leading `#<number>` is a GitHub issue; the rest (and anything pasted: engine debug output from `claude --plugin-dir plugin --debug`, hook stdin, panel screenshot) is the bug description, which has priority.
 
 ## Phase 1: Preparation (1 and 2 in parallel, then 3)
 1. **Branch**: `git fetch origin`; `fix/<slug>` from `origin/main` (same reuse rules as `/feat`).
@@ -23,7 +23,7 @@ Arguments: `$ARGUMENTS`. A leading `#<number>` is a GitHub issue; the rest (and 
 5. Write the flow file `.claude/flows/<branch with / replaced by __>.md` and tick it at each phase.
 
 ## Phase 3: Failing test first
-Launch `test-expert` to write the reproduction test in `tests/` and prove with `claude plugin test .` that it fails for the expected reason. If it passes, the diagnosis is wrong: relaunch `debugger` with the passing test; a second miss stops the flow and both hypotheses go to the user. A bug in `skills/setup/templates/hooks/*.mjs` is reproduced by running the hook with the failing stdin input in the scratchpad.
+Launch `test-expert` to write the reproduction test in `plugin/tests/` and prove with `claude plugin test plugin` that it fails for the expected reason. If it passes, the diagnosis is wrong: relaunch `debugger` with the passing test; a second miss stops the flow and both hypotheses go to the user. A bug in `plugin/skills/setup/templates/hooks/*.mjs` is reproduced by running the hook with the failing stdin input in the scratchpad.
 
 ## Phase 4: Fix (partitioned)
 Launch the owning experts (`panel-expert`, `setup-expert`, `devops`) in parallel on disjoint files. Minimal fix, no opportunistic refactoring.
