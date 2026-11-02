@@ -96,7 +96,7 @@ Without a manifest the panel still works: roles are guessed from command names, 
 
 The panel opens by itself only in a project that has a `.claude/maestro.json` (after `/maestro`). Anywhere else it stays closed until you run `/maestro-stage`, so installing the plugin for every project adds nothing to repositories that do not use it. Closing it keeps it closed for the session.
 
-1. **Flow**: phase strip, a pixel-art office where the orchestrator sits at its desk and each subagent works as a colleague at a desk of its own (outfit in the colour of its role, a role prop, typing while it works, a thumbs up when it is done), wired to the orchestrator by live cables; what blocks (a failing verification with its error excerpt, a failed review, broken rules), running and finished agents, delivery state.
+1. **Flow**: phase strip, a pixel-art office where the orchestrator sits at its desk and each subagent works as a colleague at a desk of its own (outfit in the colour of its role, a role prop, typing while it works, a thumbs up when it is done), wired to a network switch on the rug by pixel-art cables (one port LED per colleague; dotted grey when idle, in the role colour with data packets when active, flashing on a tool call; they unroll when a colleague arrives and unplug when it leaves); what blocks (a failing verification with its error excerpt, a failed review, broken rules), running and finished agents, delivery state.
 2. **Delivery**: ready-to-deliver verdict and ordered to-do list, verification steps, reviews and findings, broken rules (`h` explains, `x` clears), commits per layer, branches of the work item.
 3. **History**: filtered journal, or swimlanes with replay.
 4. **Context**: branch and base, warnings, time spent on the work item, tokens per model.
@@ -108,7 +108,7 @@ The panel only observes: it never blocks or changes a tool call.
 
 ### Effects
 
-The scene reacts to the work: rain and an umbrella while verification fails, a rainbow when it turns green, seasonal decor.
+The scene reacts to the work: rain on the office window under a grey sky while verification fails, a rainbow outside when it turns green, a sky that follows the time of day, and seasonal and event decor (indoors and behind the glass).
 
 ## Develop
 
