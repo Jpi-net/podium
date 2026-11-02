@@ -1,5 +1,5 @@
 name: Bug report
-description: Something in /maestro or the /maestro-stage panel does not work as described
+description: Something in /podium or the /podium-stage panel does not work as described
 labels: [bug]
 body:
   - type: textarea
@@ -13,14 +13,14 @@ body:
     id: repro
     attributes:
       label: Steps to reproduce
-      placeholder: "1. Run /maestro existing\n2. ..."
+      placeholder: "1. Run /podium existing\n2. ..."
     validations:
       required: true
   - type: input
     id: version
     attributes:
       label: Versions
-      description: Output of `claude --version` and the maestro version from `/plugin`.
+      description: Output of `claude --version` and the podium version from `/plugin`.
     validations:
       required: true
   - type: dropdown
@@ -32,5 +32,5 @@ body:
     id: logs
     attributes:
       label: Debug log excerpt
-      description: Lines starting with `maestro:` from `claude --debug`. Remove anything private.
+      description: Lines starting with `podium:` from `claude --debug`. Remove anything private.
       render: text
