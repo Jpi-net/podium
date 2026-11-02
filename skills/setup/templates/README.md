@@ -8,6 +8,7 @@ Instantiate these files into the project's `.claude/` (and `CLAUDE.md`).
 - Conditional blocks are always on their own lines: `{{#IF_X}}` opens, `{{/IF_X}}` closes. When X applies, delete only the two marker lines; when it does not, delete the markers and everything between them. Never leave an empty numbered step: renumber the list after removing a block.
 - A placeholder that has no value in this project: remove the whole line (or bullet) that contains it, unless the table below gives a fallback.
 - Leftover check, after writing: `grep -rnE '\{\{[#/]?[A-Z][A-Z_]*\}\}' .claude CLAUDE.md` must print nothing.
+- The templates assume the git remote is named `origin`. When the audit finds another name (`upstream`, a company name), replace `origin` with it in every generated file; without a remote, the git-workflow rule's "until a remote exists" line applies.
 - `settings.json`: wire a hook only if its `.mjs` file is generated (see the blocks). Every `"command"` path in the settings must exist on disk.
 
 | Template | Target |
@@ -67,7 +68,7 @@ Instantiate these files into the project's `.claude/` (and `CLAUDE.md`).
 
 | Block | Kept when |
 |---|---|
-| `IF_AI_RULE` | the "no AI mention" rule is enabled |
+| `IF_AI_RULE` | the opt-in "no AI attribution" rule is enabled |
 | `IF_DRAFT_PR` | pull requests are created as drafts |
 | `IF_ZERO_COMMENTS` | the zero-comment rule is enabled |
 | `IF_GIT_WRITER` / `IF_NO_GIT_WRITER` | commits and PRs are delegated to the git agent / done by the orchestrator |
@@ -77,4 +78,3 @@ Instantiate these files into the project's `.claude/` (and `CLAUDE.md`).
 | `IF_TESTS` / `IF_NO_TESTS` | the audit found a test runner (`tests: present`) / none (`tests: none`). Genesis: always `IF_TESTS`, the foundations add a runner |
 | `IF_WORK_ITEMS` | `hooks.workItemCommand` is set (the user-prompt hook is generated) |
 | `IF_GENESIS` / `IF_FULL` | stage of the setup |
-| `IF_VERSIONED` | `.claude/` is committed with the project |

@@ -53,25 +53,25 @@ Names are proposals: the user may rename any of them. The manifest `roles` recor
 |---|---|---|---|
 | `lib.mjs` | (library) | input parsing, deny/feedback helpers, manifest loading, git helpers | everything |
 | `session-start.mjs` | SessionStart | injects branch, base, ahead/behind, changes, merge state, flow in progress, stage hint; says when there is no repository or no commit yet | `git`, `stage`, `roles` |
-| `user-prompt.mjs` | UserPromptSubmit | expands work item references with a summary when a tracker command is configured | `git.workItem`, `hooks.workItemCommand`, `roles` |
+| `user-prompt.mjs` | UserPromptSubmit | expands work item references with a summary when a tracker command is configured | `hooks.workItemMention`, `hooks.workItemCommand`, `roles` |
 | `guard-bash.mjs` | PreToolUse Bash | dangerous commands, secrets printing, recursive deletes, then guard-git | `hooks.protectedBranches`, `hooks.safeRemove`, `hooks.secrets` |
-| `guard-git.mjs` | (imported by guard-bash) | assistant mentions in commits/PRs/branches (folder names such as `.claude` are ignored; model names only with an attribution cue, or always when `hooks.blockModelNames`), `--no-verify`, commits on protected branches (except the bootstrap commit of a repository without commits), commit format, draft PRs | `checks.aiMention`, `hooks.commitPattern`, `hooks.prDraft`, `hooks.blockModelNames` |
+| `guard-git.mjs` | (imported by guard-bash) | AI attribution in commits/PRs/branches when the opt-in rule is on: AI `Co-Authored-By` trailers, "Generated with/by <assistant>", "AI-generated", model names with an attribution cue (bare assistant and model names only when `hooks.blockModelNames`; folder names such as `.claude` and branch names such as `claude/fix-x` are not attribution), `--no-verify`, commits on protected branches (except the bootstrap commit of a repository without commits), commit format, draft PRs | `checks.aiMention`, `hooks.commitPattern`, `hooks.prDraft`, `hooks.blockModelNames` |
 | `guard-ownership.mjs` | PreToolUse Edit/Write (genesis and full) | agents stay in their partition, read-only agents never edit, no agent edits `.claude/` | `hooks.partitions`, `hooks.readOnlyAgents` |
-| `post-edit.mjs` | PostToolUse Edit/Write (full) | comments, debug output, focused tests, `var`, line endings and BOM kept as in the file's committed version, `.claude` config validity | `checks.*`, `generated` |
-| `stop-check.mjs` | Stop, SubagentStop | conflict markers, stray files and unignored build or dependency folders (`node_modules`, `dist`, `.angular`, `bin`, `obj`…, `.DS_Store`) before finishing | `hooks.readOnlyAgents` |
+| `post-edit.mjs` | PostToolUse Edit/Write (full) | comments, debug output and focused or skipped tests (source code files only, outside `code.ignore`), `var`, line endings and BOM kept as in the file's committed version (it rewrites the edited file to restore them), `.claude` config validity | `checks.*`, `generated`, `code.ignore` |
+| `stop-check.mjs` | Stop, SubagentStop | conflict markers in changed files, and new untracked build or dependency output (`node_modules`, `dist`, `.angular`, `bin`, `obj`…, `.DS_Store`) that is not ignored, before finishing (tracked files in such folders are left alone) | `hooks.readOnlyAgents` |
 
 Node missing: see `templates/hooks/FALLBACK.md`.
 
 ## Rules (`.claude/rules/*.md`)
 
 - `git-workflow.md` (always loaded, no `paths:`): branches, commit format and granularity, PR format, what never to do.
-- One file per layer, `paths:` front matter with the layer globs: stack and versions, architecture, naming, error handling, tests, commands, pitfalls. Start from `rules/layer.md` and the language example (`rules/typescript.md`, `rules/dotnet.md`, `rules/python.md`, `rules/go.md`, `rules/java.md`).
+- One file per layer, `paths:` front matter with the layer globs: stack and versions, architecture, naming, error handling, tests, commands, pitfalls. Start from `rules/layer.md` and the closest language example (`rules/typescript.md`, `rules/dotnet.md`, `rules/python.md`, `rules/go.md`, `rules/java.md`, `rules/rust.md`, `rules/php.md`, `rules/ruby.md`, `rules/swift.md`, `rules/cpp.md`). For any other stack (Kotlin, Dart, Elixir, Scala, shell, infrastructure as code…) fill `rules/layer.md` from the audit alone.
 - One file per cross-cutting concern when the audit found one (security model, multi-tenancy, generated code, background jobs, database migrations).
 - Rules contain facts and commands of this repository, never generic advice.
 
 ## Settings (`.claude/settings.json`)
 
-From `templates/settings.json.tmpl`: wiring of the generated hooks only, `attribution` emptied when the AI-mention rule is on (it replaces the deprecated `includeCoAuthoredBy`), permissions `allow` for the read-only git commands and the verified build/test/lint commands, `deny` for secret files at any depth.
+From `templates/settings.json.tmpl`: wiring of the generated hooks only, `attribution` emptied only when the user opted into the AI-attribution rule (it replaces the deprecated `includeCoAuthoredBy`; otherwise Claude Code's default attribution is kept), permissions `allow` for the read-only git commands and the verified build/test/lint commands, `deny` for secret files at any depth.
 
 ## Root files
 

@@ -29,7 +29,7 @@ All regex fields are JavaScript regular expression sources (no slashes, backslas
 | `git.fixPrefixes` | string[] | branch prefixes of fixes |
 | `git.support` | regex | long-lived maintenance branches (`""` if none) |
 | `git.workItem` | regex | first capture group extracts the work item / issue id from a branch name |
-| `theme` | string | panel decoration theme (`""` = none, see Advanced options) |
+| `theme` | string | reserved for panel decoration themes; keep `""` (only the default theme exists today, any value falls back to it) |
 | `generatedFiles` | object | path → sha256 of each file as written by the last `/maestro` run; never contains the manifest itself |
 
 ### `checks`
@@ -38,8 +38,8 @@ All regex fields are JavaScript regular expression sources (no slashes, backslas
 |---|---|---|
 | `comments` | boolean | zero comments in new code (allowed markers in `hooks.commentAllow`) |
 | `noVar` | boolean | no `var` declarations (C#, JavaScript) |
-| `noFreeFunction` | boolean | no function declared outside a class (TS/C# style rule) |
-| `aiMention` | boolean | no AI / assistant mention in commits, branches, PRs |
+| `noFreeFunction` | boolean | no function declared outside a class (checked by the panel in TypeScript files only) |
+| `aiMention` | boolean | opt-in: no AI attribution in commits, branches, PRs (AI `Co-Authored-By` trailers, "Generated with/by <assistant>", "AI-generated"); default `false` |
 | `partition` | boolean | the panel flags two agents editing the same file |
 | `hooks` | boolean | the panel reports hook denials |
 | `generated` | GuardText | texts shown when a generated file is edited by hand |
@@ -63,7 +63,7 @@ All regex fields are JavaScript regular expression sources (no slashes, backslas
 | `secrets` | regex | paths whose content must never be printed |
 | `workItemCommand` | string | command printing a JSON summary of a work item, `{id}` replaced (e.g. `gh issue view {id} --json number,title,state`) (`""` = none) |
 | `workItemMention` | regex | how users mention a work item in a prompt (first group = id) |
-| `blockModelNames` | boolean | also refuse bare model names (opus, sonnet, haiku) in git artifacts; default `false`: they are refused only with an attribution cue ("written with Opus", "Sonnet 4") |
+| `blockModelNames` | boolean | with `checks.aiMention`, also refuse bare assistant and model names (claude, anthropic, chatgpt, copilot, llm, opus, sonnet, haiku) anywhere in git artifacts, branch names included; default `false`: they are refused only in an attribution phrase ("written with Opus", "Sonnet 4", "Generated with Claude Code") |
 
 ## Example: full stage
 
@@ -204,6 +204,5 @@ Project-specific guards the panel can show. Generate them only when the audit fi
 |---|---|---|
 | `checks.legacy` | GuardText & `{ pattern, current, modern? }` | flags new files created in a legacy area (`pattern`) while working on a feature branch; `current` names where new code goes; `modern` counts files in the new area |
 | `checks.isolation` | GuardText & `{ rules: ContentRule[], enabledBy?: { pattern, path } }` | content rules for a data-isolation model (tenants, organisations, owners): when a `path` matches, `when` matches the content (optional) and `require` does not, warn with `message`; `skipName` excludes file names; `enabledBy` activates the rules only when `pattern` is found under `path` (`git grep`) |
-| `checks.integrationImage` | GuardText & `{ command, schema, build, armFlag?, stale? }` | warns when integration tests (`command` regex) run after `schema` files changed since the last image `build`; `armFlag` is a flag required on ARM machines; `stale` is the hint shown |
+| `checks.integrationImage` | GuardText & `{ command, schema, build, armFlag?, stale? }` | warns when integration tests (`command` regex) run after `schema` files changed since the last image `build`; `armFlag` is a flag the build needs on arm64 hosts (Apple Silicon, ARM Linux), and the panel warns when it is missing there; `stale` is the hint shown |
 | `git.counterpart` | string | suffix of the twin branch a maintenance fix needs on the base branch (e.g. `-main`); the panel reminds it when missing |
-| `theme` | string | panel decoration theme; `""` keeps the generic effects |

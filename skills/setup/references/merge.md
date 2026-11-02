@@ -4,7 +4,7 @@ The user may have edited any generated file since the last run, or may have a `.
 
 ## Classify every target file
 
-Compute the current sha256 (`shasum -a 256 <file>` or `sha256sum <file>`) and compare with `generatedFiles[<path>]` from the manifest (empty on a first run).
+Compute the current sha256 (`shasum -a 256 <file>` or `sha256sum <file>`; on Windows `certutil -hashfile <file> SHA256` or PowerShell `(Get-FileHash <file>).Hash.ToLower()`) and compare with `generatedFiles[<path>]` from the manifest (empty on a first run).
 
 | Situation | Action |
 |---|---|

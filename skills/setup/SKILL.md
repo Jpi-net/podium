@@ -14,7 +14,7 @@ The user runs this skill by typing `/maestro` (a command registered by the plugi
 
 Arguments: `$ARGUMENTS`. First token may force the mode: `new` (genesis), `existing` (full), `update`, `audit` (report only, write nothing). Everything else is free context from the user.
 
-Talk to the user in THEIR language (detect it from their messages; French if they write French). Everything written to disk is in the artifact language chosen in Step 1 (English by default).
+Talk to the user in THEIR language (detect it from their messages). Everything written to disk is in the artifact language chosen in Step 1 (English by default).
 
 Read these references when the step needs them, not all upfront:
 - `references/vision.md`: the principles every generated file must embody.
@@ -33,7 +33,7 @@ Keep a checklist of the steps and report progress to the user with one short lin
 
 Run in parallel (read-only):
 - `git rev-parse --show-toplevel` (no git repository: tell the user that git must be configured and initialised first, offer `git init`, and continue only after it exists), `git log --oneline -5` (exit code 128 on a repository without commits is expected: it is a fresh repository), `git status --porcelain | head`.
-- List the top level and count source files outside `.claude/`, `.git/`, `node_modules/`, `dist/`, `bin/`, `obj/`.
+- List the top level and count source files outside `.claude/`, `.git/` and dependency or build output folders (`node_modules/`, `vendor/`, `dist/`, `build/`, `out/`, `target/`, `bin/`, `obj/`, `.venv/`, `venv/`, `__pycache__/`, `Pods/`, `.gradle/`, `DerivedData/`).
 - Check for `.claude/maestro.json`, `.claude/`, `CLAUDE.md`, `.claude/CLAUDE.md`.
 
 Decide:
@@ -49,7 +49,7 @@ A forced mode in the arguments wins, but say so when it contradicts what you see
 Ask only what you cannot infer. In every question the recommended option comes first and its label ends with "(Recommended)". Typical set:
 1. Artifact language for files, code identifiers, commits, logs: English (Recommended) or the user's language. The conversation language follows the user automatically.
 2. `.claude/` committed with the project, or local only (then `.claude/` goes to `.git/info/exclude`, never to the shared `.gitignore`). Recommended: committed by default, including a single-author repository or a repository without remote; local only is recommended only when the repository is shared with other contributors and this setup is personal to the user.
-3. Optional rules to enable (multiSelect), each proposed, never imposed: no AI or assistant mention in commits/PRs/branches (Recommended), "a fix starts with a failing test" (Recommended only when the project has a test runner; genesis: recommended, the foundations add one), draft-only pull requests (Recommended when PRs are reviewed; genesis without a remote: not recommended, propose it again when moving to full), zero comments in new code except test structure markers, one commit per layer, explicit types (no `var` where the language has it).
+3. Optional rules to enable (multiSelect), each proposed, never imposed: no AI attribution in commits/PRs/branches (blocks AI co-author trailers and "Generated with" lines; a neutral option, not recommended by default: Claude Code's attribution stays unless the user enables it), "a fix starts with a failing test" (Recommended only when the project has a test runner; genesis: recommended, the foundations add one), draft-only pull requests (Recommended when PRs are reviewed; genesis without a remote: not recommended, propose it again when moving to full), zero comments in new code except test structure markers, one commit per layer, explicit types (no `var` where the language has it).
 4. Model budget: balanced (Recommended: Opus thinks, Sonnet implements, Haiku runs mechanical tasks) or economical (Sonnet everywhere except Haiku for mechanical tasks).
 
 When the audit finds no test runner (`tests: none`), ask one more question in Step 3, separately: add a test runner to the project now (the first feature or a dedicated task will set it up) or work with reproduction scenarios until then (Recommended for a small or prototype project).
@@ -82,16 +82,16 @@ Ask for validation with AskUserQuestion: Validate / Adjust (specify) / Cancel. I
 2. Instantiate the templates (`templates/**`) following `templates/README.md`: fill every `{{PLACEHOLDER}}` from the audit and the validated proposal, in the artifact language; keep or drop each conditional block (markers on their own lines) and renumber lists. Leftover check: `grep -rnE '\{\{[#/]?[A-Z][A-Z_]*\}\}' .claude CLAUDE.md` prints nothing (double braces of Angular, Vue or Handlebars snippets quoted in rules are content, not placeholders).
 3. Specialise, do not copy: every agent and rule must name the real paths, commands, frameworks and conventions of this repository. Generic text that could apply to any project is a defect.
 4. Write the skills under `.claude/skills/<chosen-name>/SKILL.md` (the folder name is the command name).
-5. Write `.claude/maestro.json` (format: `references/manifest.md`): stage, language, versioned, roles (role → chosen command name), phases (agent groups for the panel, each with its `id`), reviewers, verification patterns from the real commands, layers, code roots, generated-file pattern, enabled checks, git conventions, `hooks` section (partitions of every implementer), and `generatedFiles` with the sha256 of every file you wrote except the manifest itself (`shasum -a 256` or `sha256sum`).
+5. Write `.claude/maestro.json` (format: `references/manifest.md`): stage, language, versioned, roles (role → chosen command name), phases (agent groups for the panel, each with its `id`), reviewers, verification patterns from the real commands, layers, code roots, generated-file pattern, enabled checks, git conventions, `hooks` section (partitions of every implementer), and `generatedFiles` with the sha256 of every file you wrote except the manifest itself (`shasum -a 256` or `sha256sum`; on Windows `certutil -hashfile <file> SHA256` or PowerShell `(Get-FileHash <file>).Hash.ToLower()`).
 6. Local only: append `.claude/` to `.git/info/exclude` if not already present. Versioned: write `.claude/.gitignore` from `templates/gitignore.tmpl` (flows, agent memory, local settings stay out of git).
 
 ## Step 5: Verify (fix and re-run until clean, at most 3 rounds)
 
-- Every JSON file parses: `node -e "JSON.parse(require('fs').readFileSync(process.argv[1],'utf8'))" <file>`.
+- Every JSON file parses: `node -e "JSON.parse(require('fs').readFileSync(process.argv[1],'utf8'))" <file>`; without Node, `python3 -m json.tool <file>`, `jq empty <file>` or PowerShell `Get-Content <file> -Raw | ConvertFrom-Json`.
 - Every `"command"` in `.claude/settings.json` points to a hook file that exists.
 - Every hook passes `node --check`, then runs with sample inputs on stdin from the scratchpad:
   - an allowed case: a `git status` Bash call for PreToolUse, an edit of a source file inside its partition, `{}` for SessionStart and Stop;
-  - at least one refusal case per enabled rule: force push, commit on a protected branch (in an empty repository, test it in a temporary clone in the scratchpad that has one commit), recursive delete of a source folder, printing `.env`, an edit outside a partition, a commit message mentioning an assistant (AI rule), a commit message off the format (commit pattern), a PR without `--draft` (draft rule), an added comment line (zero-comment rule).
+  - at least one refusal case per enabled rule: force push, commit on a protected branch (in an empty repository, test it in a temporary clone in the scratchpad that has one commit), recursive delete of a source folder, printing `.env`, an edit outside a partition, a commit message with an AI attribution line (AI rule), a commit message off the format (commit pattern), a PR without `--draft` (draft rule), an added comment line (zero-comment rule).
   - an edit of a file with a BOM and of a CRLF file keeps its BOM and line endings (post-edit restores the reference style);
   - Expected outcomes: exit 0 with no output (allowed), exit 0 with a JSON `permissionDecision: "deny"` (PreToolUse refusal) or a JSON `decision: "block"` (Stop), exit 2 with a message on stderr (PostToolUse feedback). Anything else is a defect.
 - Every agent and skill has valid front matter (`name`, `description`; agents also `tools`, `model`), and every skill name matches its folder.
@@ -114,5 +114,5 @@ Tell the user, in their language and briefly:
 - Never commit, push or create branches; the user decides when to commit `.claude/`.
 - Never print or copy secrets (`.env`, key files); reference variable names only.
 - Never invent commands: every command written into a rule, agent or the manifest was seen in the repository (scripts, project files, CI) or confirmed by the user.
-- When the AI-mention rule is enabled, no generated git or PR artifact may mention Claude, AI, Anthropic, model names, "Co-Authored-By" or "Generated with".
+- When the AI-attribution rule is enabled, no generated git or PR artifact carries an AI attribution: no AI "Co-Authored-By" trailer, no "Generated with/by <assistant>" line, no model name used as an author. When it is disabled, Claude Code's default attribution is kept.
 - After three failures on the same verification step, stop and report the exact error to the user.

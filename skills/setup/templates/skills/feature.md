@@ -50,6 +50,6 @@ Commit following `.claude/rules/git-workflow.md`. With a remote: push and open t
 - Use the models defined in each agent file; never a generic agent when a dedicated one exists.
 - Ask subagents for their output contract, never for file dumps.
 {{#IF_AI_RULE}}
-- Never mention Claude, AI or the agents in any git or PR artifact.
+- No AI attribution in any git or PR artifact (see the git-workflow rule).
 {{/IF_AI_RULE}}
 - Three consecutive failures on the same step: stop and report the exact error and your hypothesis.

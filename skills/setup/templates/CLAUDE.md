@@ -53,6 +53,6 @@ Once the stack is chosen and the first code exists, run `/maestro` again: it aud
   Exception: the very first commit of an empty repository goes on the base branch (see `.claude/rules/git-workflow.md`, Bootstrap).
 {{/IF_GENESIS}}
 {{#IF_AI_RULE}}
-- Mention Claude, AI, an assistant or a model in any commit, branch, PR, code or comment. A hook enforces it; never work around it.
+- Add an AI attribution (AI co-author trailer, "Generated with", model name as author) to any commit, branch or PR. A hook enforces it; never work around it.
 {{/IF_AI_RULE}}
 - Put scratch files in the repository: use the session scratchpad.

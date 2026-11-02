@@ -8,7 +8,7 @@ Tell the user the one command for their platform (`brew install node`, `winget i
 
 ## Fallback: shell guards only
 
-If the user does not want Node, wire only these two shell hooks (POSIX `sh`, no dependency besides `git` and `grep`). They cover the most important guard rails; the manifest-driven checks (partitions, post-edit checks, work items) are skipped, and the user is told so.
+If the user does not want Node, wire only these two shell hooks (POSIX `sh`, no dependency besides `git` and `grep`). They cover the most important guard rails; the manifest-driven checks (partitions, post-edit checks, work items) are skipped, and the user is told so. On Windows they run through the Git for Windows `sh` that Claude Code uses for hooks; a Windows machine without Git Bash gets no fallback, so recommend Node there.
 
 `.claude/hooks/guard-bash.sh`:
 

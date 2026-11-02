@@ -10,6 +10,13 @@
 
 Maestro never writes your product. It only writes `.claude/`; the project is then built with Claude Code through the commands it generates.
 
+## Requirements
+
+- Claude Code with plugin support.
+- `git`: `/maestro` works on a git repository; in a folder without one it offers `git init` first. Any host works (GitHub, GitLab, Azure DevOps, Bitbucket, self-hosted), as does a repository without a remote.
+- Node 18 or later for the generated hooks. Without Node, `/maestro` can wire a reduced set of POSIX shell guards instead (force push, hard reset, `git clean -f`, `--no-verify`, printing `.env`); on Windows that needs Git Bash.
+- Any language or stack: the audit reads the project's own build, test and lint commands rather than assuming a toolchain.
+
 ## Install
 
 At the prompt of a Claude Code terminal session:
@@ -44,9 +51,24 @@ In the desktop app: click **+** next to the prompt box, then **Plugins**, **Add 
 | `update` | Detects what changed (new layers, renamed commands, edited files) and proposes updates. |
 | `audit` | Report and proposal only; nothing is written. |
 
-Preferences are asked once: artifact language (English by default; the conversation follows yours), `.claude/` versioned or local only (`.git/info/exclude`), optional rules (no AI mention in git artifacts, zero comments, draft pull requests, a fix starts with a failing test...), and the model budget. Any git host works.
+Preferences are asked once: artifact language (English by default; the conversation follows yours), `.claude/` versioned or local only (`.git/info/exclude`), optional rules, all off unless you pick them (no AI attribution in git artifacts, zero comments, draft pull requests, a fix starts with a failing test...), and the model budget. Any git host works.
 
-Generated hooks are Node scripts (`.mjs`) that read their settings from the manifest; a shell fallback covers machines without Node.
+Generated hooks are Node scripts (`.mjs`) that read their settings from the manifest; a reduced shell fallback covers machines without Node (see Requirements).
+
+### What the generated hooks do
+
+They are plain files in your `.claude/hooks/`, shown in the proposal before anything is written, and you can read or delete them at any time.
+
+| Hook | Effect |
+| --- | --- |
+| `guard-bash`, `guard-git` (before a shell command) | Refuse the command (Claude sees the reason and adapts): force push, push to a protected branch, `git reset --hard`, `git clean -f`, `git add --force`, discarding the working tree, `branch -D`, dropping stashes, deleting remote branches, `docker system prune` and volume removal, printing secret files, recursive deletes outside build, dependency, cache and scratch folders, `--no-verify`, commits on protected branches, and, only for the rules you enabled, commit messages off the format, non-draft pull requests and AI attribution. |
+| `guard-ownership` (before an edit) | Refuses an edit by an agent outside its file partition, by a read-only agent, or by any subagent inside `.claude/`. |
+| `post-edit` (after an edit) | Reports problems back to Claude (comments when the zero-comment rule is on, debug output, focused or skipped tests, `var`) and rewrites the edited file only to restore its original line endings and BOM. |
+| `stop-check` (end of a turn) | Asks Claude to finish when conflict markers or new untracked build output remain. |
+| `session-start` | Adds the branch, its base, ahead and behind counts and the flow in progress to the context. |
+| `user-prompt` (only when you configure a tracker command) | Runs your `hooks.workItemCommand` (e.g. `gh issue view {id}`) when a prompt mentions `#<id>`, and adds its output to the context. |
+
+The hooks run only local commands (`git` and the command you configure); they send nothing anywhere. The generated `settings.json` allows the read-only git commands plus `git fetch` and `git branch` (branch deletion stays guarded), and the build, test and lint commands found in your project, denies reading secret files, and raises `BASH_MAX_TIMEOUT_MS` to 30 minutes so long builds and test suites can finish.
 
 ## The manifest: `.claude/maestro.json`
 
@@ -62,7 +84,7 @@ Written by `/maestro`, read by the panel and by the generated hooks. Main keys:
 | `layers`, `code`, `generated` | Path patterns of the code layers and generated files |
 | `checks` | Optional rules, legacy code, data isolation, integration image |
 | `git` | Base branch, branch prefixes, support branches, work item pattern |
-| `theme`, `hooks`, `generatedFiles` | Panel theme, generated hooks, files written by maestro |
+| `hooks`, `generatedFiles` | Settings of the generated hooks, files written by maestro |
 
 Full format: [`skills/setup/references/manifest.md`](skills/setup/references/manifest.md).
 
@@ -82,9 +104,9 @@ Other arguments: `accessory [name|list]` (the avatar wears a random accessory ea
 
 The panel only observes: it never blocks or changes a tool call.
 
-### Themes
+### Effects
 
-`"theme": "insurance"` in the manifest turns on insurance references: claims filed for failed agents, receipts and a PAID stamp, commission coins, branch-based decor, a data-isolation shield. Without a theme the panel keeps the generic effects: rain and an umbrella while verification fails, a rainbow when it turns green, seasonal decor.
+The scene reacts to the work: rain and an umbrella while verification fails, a rainbow when it turns green, seasonal decor.
 
 ## Develop
 

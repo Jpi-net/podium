@@ -40,6 +40,6 @@ Invoke `{{CMD_DELIVER}}` with: type `fix`, the id, the target `{{BASE_BRANCH}}`,
 ## Rules
 - Never fix without a reproduced failure, except a pure configuration fix where you explain why no test applies.
 {{#IF_AI_RULE}}
-- Never mention Claude, AI or the agents in any git or PR artifact.
+- No AI attribution in any git or PR artifact (see the git-workflow rule).
 {{/IF_AI_RULE}}
 - Three consecutive failures on the same step: stop and report.

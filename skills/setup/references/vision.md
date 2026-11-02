@@ -7,7 +7,7 @@ Every generated file must serve these principles. When a choice is unclear, pick
 - The main conversation plans, delegates, integrates and talks to the user.
 - It writes production code only for trivial glue when no expert owns the file.
 - It keeps a checklist of phases and reports one short line per phase.
-- Long flows (feature, fix) persist a flow file in `.claude/flows/<branch>.md` (plan, partition, checked phases) so a context compaction or a new session resumes at the first unchecked phase.
+- Long flows (feature, fix) persist a flow file in `.claude/flows/<branch with / replaced by __>.md` (plan, partition, checked phases) so a context compaction or a new session resumes at the first unchecked phase.
 
 ## 2. Model tiers
 
@@ -60,7 +60,7 @@ Escalate to a stronger model only on a second attempt (diagnosis that did not re
 - One commit for a narrow change; one commit per layer for a feature, each commit builds.
 - Pull requests are created as drafts when the rule is enabled: the human publishes them.
 - Commit and PR formats are written once in a git-workflow rule and referenced, never restated.
-- Optional rule (recommended): no AI or assistant mention in any git or PR artifact.
+- Optional rule (off unless the user enables it): no AI attribution in git or PR artifacts. When it is off, Claude Code's default attribution is kept.
 
 ## 9. Domain first (optional, for domain-rich projects)
 

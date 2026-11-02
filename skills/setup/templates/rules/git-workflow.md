@@ -1,8 +1,8 @@
 # Git, commits and pull requests
 
 {{#IF_AI_RULE}}
-## Absolute rule
-- NO reference to Claude, AI, an assistant, a model name, "Generated with", `Co-Authored-By` or 🤖 in commit messages, branch names, PR titles, PR descriptions, code or comments. A hook enforces it; never work around it.
+## No AI attribution (project choice)
+- No AI attribution in commit messages, branch names, PR titles or PR descriptions: no AI `Co-Authored-By` trailer, no "Generated with/by <assistant>" line, no 🤖, no model name as an author. Naming a technology the project uses (an LLM client, an API) is fine. A hook enforces it; never work around it.
 {{/IF_AI_RULE}}
 
 ## Branches

@@ -15,6 +15,7 @@ Before opening a pull request:
 ```bash
 claude plugin validate .
 claude plugin test .
+for f in skills/setup/templates/hooks/*.mjs; do node --check "$f"; done
 ```
 
 Type-checking: once the engine has loaded the plugin, it writes `.claude-plugin/types/` (ignored by git), and `tsc -p .` checks the hooks against the exact API of your Claude Code version.
