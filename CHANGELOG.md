@@ -7,6 +7,7 @@ All notable changes to this project are documented here. The format follows [Kee
 ### Changed
 
 - The panel's orchestrator now sits at a desk in an office: the sky shows through a window with curtains, above a panelled wall and a parquet floor with a plant, a bookcase and a rug; the desk lamp lights up in the evening and at night.
+- Subagents are now office colleagues instead of robots: each sits at a desk in the room (front row by the main desk, then a back row against the window), wears the colour of its role with a role prop or headgear, types while it works and gives a thumbs up when it is done; a fork of the main thread looks like the orchestrator. Labels no longer overlap.
 - New icon: the orchestrator wired to its sub-agents.
 - The empty-flow hint reads "Waiting for agents…".
 

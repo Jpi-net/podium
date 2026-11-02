@@ -1,6 +1,8 @@
 import { expect, test } from 'claude-code/testing'
 import { Canvas, type Point, type Rgb } from '../hooks/canvas'
 import { Effects, type Ambience, type Obstacle } from '../hooks/effects'
+import { Colleagues } from '../hooks/colleagues'
+import { Office } from '../hooks/office'
 import { Robots } from '../hooks/robots'
 import { Scene, type Cable, type GraphLabel, type SceneInput, type ToolHit } from '../hooks/scene'
 import { Theme } from '../hooks/theme'
@@ -57,22 +59,18 @@ class SceneFixture {
     return Scene.graph(input).obstacles ?? []
   }
 
-  static scaleOf(positions: Map<string, Point>, ids: string[], columns: number): number {
-    const centerX = columns / 2
-    const first = positions.get(ids[0] ?? '')
-    const stagger = ids.length > 2 && first && Math.abs(first.x - centerX) > 0.5 ? 0.5 : 0
-    let best = 0
-    let bestCos = 0
-    ids.forEach((id, i) => {
-      const point = positions.get(id)
-      const cos = Math.cos(-Math.PI / 2 + ((i + stagger) * 2 * Math.PI) / ids.length + (ids.length <= 2 ? Math.PI / 2 : 0))
-      if (point && Math.abs(cos) > bestCos) {
-        bestCos = Math.abs(cos)
-        best = (columns / 2 - 2 - Math.abs(point.x - centerX) / Math.abs(cos)) / (Robots.WIDTH / 2)
-      }
-    })
-    return best
+  static layoutOf(agents: FlowAgent[], columns: number, rows: number, date: Date): { labels: GraphLabel[]; boxes: Obstacle[] } {
+    const input: SceneInput = { ...SceneFixture.input(agents, SceneFixture.NOW, 10, 0, false, 0, new Map()), isLive: false, columns, rows, ambience: Effects.ambience(date, false, 0, false, []) }
+    const result = Scene.graph(input)
+    const obstacles = result.obstacles ?? []
+    return { labels: result.labels, boxes: obstacles.slice(result.labels.length + 1) }
   }
+
+  static seatScale(agents: FlowAgent[], columns: number, rows: number, date: Date): number {
+    const box = SceneFixture.layoutOf(agents, columns, rows, date).boxes[0]
+    return box ? box.w / Colleagues.WIDTH : 0
+  }
+
 
   static input(agents: FlowAgent[], at: number, frame: number, dt: number, isBusy: boolean, idleMs: number, positions: Map<string, Point>): SceneInput {
     return {
@@ -208,32 +206,33 @@ for (const [columns, rows] of LayoutCheck.SIZES) {
       test(`graph keeps ${n} robots and labels inside the canvas without overlap at ${columns}x${rows} on ${date.toISOString().slice(0, 10)}`, async () => {
         // Arrange
         const agents = Array.from({ length: n }, (_, i) => SceneFixture.agent(`a${i}`, `type-${i}`, '', 100 - i))
-        const ids = agents.map(a => a.id)
 
         // Act
-        const { labels, positions } = SceneFixture.render(agents, columns, rows, date, false)
+        const { labels, boxes } = SceneFixture.layoutOf(agents, columns, rows, date)
 
         // Assert
-        const scale = SceneFixture.scaleOf(positions, ids, columns)
-        expect(scale).toBeGreaterThan(0.3)
-        expect(scale).toBeLessThan(1.31)
-        const boxes = ids.map(id => {
-          const p = positions.get(id) ?? { x: 0, y: 0 }
-          const halfWidth = (Robots.WIDTH * scale) / 2
-          const halfHeight = (Robots.HEIGHT * scale) / 2
-          return { left: p.x - halfWidth, right: p.x + halfWidth, top: p.y - halfHeight, bottom: p.y + halfHeight }
-        })
+        expect(boxes.length).toBeGreaterThan(0)
         for (const b of boxes) {
-          expect(b.left).toBeGreaterThanOrEqual(0)
-          expect(b.right).toBeLessThanOrEqual(columns)
-          expect(b.top).toBeGreaterThanOrEqual(0)
-          expect(b.bottom).toBeLessThanOrEqual(rows * 2)
+          expect(b.w / Colleagues.WIDTH).toBeGreaterThanOrEqual(0.6)
+          expect(b.w / Colleagues.WIDTH).toBeLessThanOrEqual(1)
+          expect(b.x).toBeGreaterThanOrEqual(0)
+          expect(b.x + b.w).toBeLessThanOrEqual(columns)
+          expect(b.y).toBeGreaterThanOrEqual(0)
+          expect(b.y + b.h).toBeLessThanOrEqual(rows * 2 + 0.5)
         }
         for (const l of labels) {
           const start = l.column
           const end = l.column + Array.from(l.text).length
-          const overlaps = boxes.some(b => start < b.right && end > b.left && l.row * 2 < b.bottom && l.row * 2 + 2 > b.top)
+          const overlaps = boxes.some(b => start < b.x + b.w && end > b.x && l.row * 2 < b.y + b.h && l.row * 2 + 2 > b.y)
           expect(overlaps).toBe(false)
+        }
+        for (const a of labels) {
+          for (const b of labels) {
+            if (a === b || a.row !== b.row) continue
+            const aEnd = a.column + Array.from(a.text).length
+            const bEnd = b.column + Array.from(b.text).length
+            expect(a.column < bEnd && aEnd > b.column).toBe(false)
+          }
         }
       })
     }
@@ -317,21 +316,21 @@ test('graph labels the avatar main with the model when awake and zzz when asleep
   expect(main(working)).toBe('◆ main · Opus')
 })
 
-test('graph keeps robots at least 0.72 for Halloween with 6 agents and 0.75 for Christmas with 3 agents at 84 columns', async () => {
+test('graph keeps colleagues at least 0.72 for Halloween with 6 agents and 0.75 for Christmas with 3 agents at 84 columns', async () => {
   // Arrange
   const rows = Scene.graphRows(84, 60)
   const six = Array.from({ length: 6 }, (_, i) => SceneFixture.agent(`a${i}`, `type-${i}`, '', 100 - i))
   const three = six.slice(0, 3)
 
   // Act
-  const halloween = SceneFixture.render(six, 84, rows, new Date(2026, 9, 31, 12, 0), false)
-  const christmas = SceneFixture.render(three, 84, rows, new Date(2026, 11, 24, 12, 0), false)
-  const plain = SceneFixture.render(three, 84, rows, new Date(2026, 5, 1, 12, 0), false)
+  const halloween = SceneFixture.seatScale(six, 84, rows, new Date(2026, 9, 31, 12, 0))
+  const christmas = SceneFixture.seatScale(three, 84, rows, new Date(2026, 11, 24, 12, 0))
+  const plain = SceneFixture.seatScale(three, 84, rows, new Date(2026, 5, 1, 12, 0))
 
   // Assert
-  expect(SceneFixture.scaleOf(halloween.positions, six.map(a => a.id), 84)).toBeGreaterThanOrEqual(0.72)
-  expect(SceneFixture.scaleOf(christmas.positions, three.map(a => a.id), 84)).toBeGreaterThanOrEqual(0.75)
-  expect(SceneFixture.scaleOf(plain.positions, three.map(a => a.id), 84)).toBeGreaterThan(0.74)
+  expect(halloween).toBeGreaterThanOrEqual(0.72)
+  expect(christmas).toBeGreaterThanOrEqual(0.75)
+  expect(plain).toBeGreaterThan(0.74)
 })
 
 test('graph keeps the agent label during the finale with its outcome and drops it after the teleport', async () => {
@@ -464,49 +463,6 @@ test('graph places two agents at the same height whatever the date', async () =>
     // Assert
     expect(Math.abs((positions.get('a')?.y ?? 0) - (positions.get('b')?.y ?? 99))).toBeLessThan(0.5)
   }
-})
-
-test('graph puts a single agent beside the avatar at the largest size the avatar allows inside the canvas', async () => {
-  // Arrange
-  const agents = [SceneFixture.agent('a', 'architect', '', 100)]
-  const rows = Scene.graphRows(84, 70)
-
-  for (const date of [new Date(2026, 5, 1, 12, 0), new Date(2026, 9, 31, 12, 0)]) {
-    // Act
-    const { positions } = SceneFixture.render(agents, 84, rows, date, false)
-
-    // Assert
-    const p = positions.get('a') ?? { x: 0, y: 0 }
-    const scale = SceneFixture.scaleOf(positions, ['a'], 84)
-    expect(Math.abs(p.x - 42)).toBeGreaterThan(10)
-    expect(scale).toBeGreaterThanOrEqual(0.74)
-    expect(scale).toBeLessThanOrEqual(0.76)
-    expect(p.y - (Robots.HEIGHT * scale) / 2).toBeGreaterThanOrEqual(0)
-  }
-})
-
-test('graph never draws a robot larger than the avatar allows whatever the number of agents', async () => {
-  for (const n of [1, 2, 3, 6]) {
-    // Arrange
-    const agents = Array.from({ length: n }, (_, i) => SceneFixture.agent(`r${i}`, 'architect', '', 100 - i))
-
-    // Act
-    const { positions } = SceneFixture.render(agents, 120, Scene.graphRows(120, 70), new Date(2026, 5, 1, 12, 0), false)
-
-    // Assert
-    expect(`${n}:${SceneFixture.scaleOf(positions, agents.map(a => a.id), 120) <= 0.76}`).toBe(`${n}:true`)
-  }
-})
-
-test('graph keeps the sub-agent robots at most 1.1 in quad mode', async () => {
-  // Arrange
-  const agents = [SceneFixture.agent('a', 'architect', '', 100)]
-
-  // Act
-  const { positions } = SceneFixture.render(agents, 120, Scene.graphRows(120, 70), new Date(2026, 5, 1, 12, 0), false)
-
-  // Assert
-  expect(SceneFixture.scaleOf(positions, ['a'], 120)).toBeLessThan(1.11)
 })
 
 test('graph keeps a leaving robot as an obstacle until its exit ends', async () => {
@@ -736,37 +692,17 @@ test('dissolve breaks the cable into particles drifting away and fading over the
   expect(CableFixture.lit(end, () => true)).toBe(0)
 })
 
-test('hover keeps every robot within one unit of its slot and desynchronises robots', async () => {
-  // Arrange
-  const seeds = [0, 0.13, 0.5, 0.77, 0.99]
-  const times = Array.from({ length: 400 }, (_, i) => SceneFixture.NOW + i * 97)
-
-  // Act
-  const offsets = seeds.map(seed => times.map(at => Scene.hover(seed, at)))
-
-  // Assert
-  for (const series of offsets) {
-    for (const o of series) {
-      expect(Math.abs(o.x)).toBeLessThanOrEqual(1)
-      expect(Math.abs(o.y)).toBeLessThanOrEqual(1)
-    }
-    expect(Math.max(...series.map(o => o.y)) - Math.min(...series.map(o => o.y))).toBeGreaterThan(0.3)
-  }
-  expect(offsets[0]?.[0]).not.toEqual(offsets[2]?.[0])
-})
-
-test('graph sizes robots the same on Halloween as on a plain day because robots wear no hat', async () => {
+test('graph seats colleagues at the same size on Halloween as on a plain day', async () => {
   // Arrange
   const rows = Scene.graphRows(84, 60)
   const agents = Array.from({ length: 4 }, (_, i) => SceneFixture.agent(`a${i}`, `type-${i}`, '', 100 - i))
-  const ids = agents.map(a => a.id)
 
   // Act
-  const halloween = SceneFixture.render(agents, 84, rows, new Date(2026, 9, 31, 12, 0), false)
-  const plain = SceneFixture.render(agents, 84, rows, new Date(2026, 5, 1, 12, 0), false)
+  const halloween = SceneFixture.seatScale(agents, 84, rows, new Date(2026, 9, 31, 12, 0))
+  const plain = SceneFixture.seatScale(agents, 84, rows, new Date(2026, 5, 1, 12, 0))
 
   // Assert
-  expect(Math.abs(SceneFixture.scaleOf(halloween.positions, ids, 84) - SceneFixture.scaleOf(plain.positions, ids, 84))).toBeLessThan(0.001)
+  expect(Math.abs(halloween - plain)).toBeLessThan(0.001)
 })
 
 test('graph lands a freshly spawned robot on its slot after flying out of the avatar', async () => {
@@ -787,4 +723,55 @@ test('graph lands a freshly spawned robot on its slot after flying out of the av
   expect(Math.hypot(launch.x - 42, launch.y - slot.y)).toBeLessThan(Math.hypot(slot.x - 42, 0))
   expect(Math.abs(launch.x - 42)).toBeLessThan(Math.abs(slot.x - 42))
   expect(landed).toEqual(slot)
+})
+
+test('seats fill the front row next to the main desk before the back row', () => {
+  // Arrange
+  const canvas = new Canvas(84, 36, 'quad')
+  const room = Office.room(canvas, 42, 45, 11.2)
+
+  // Act
+  const plan = Scene.seats(canvas, room, 6)
+
+  // Assert
+  const front = plan.seats.filter(s => !s.isBack)
+  const back = plan.seats.filter(s => s.isBack)
+  expect(plan.seats.slice(0, front.length).every(s => !s.isBack)).toBe(true)
+  expect(front.length).toBeGreaterThan(0)
+  expect(back.length).toBe(front.length)
+  expect(plan.seats[0]?.point.x ?? 0).toBeLessThan(room.deskLeft)
+  expect(plan.seats[1]?.point.x ?? 0).toBeGreaterThan(room.deskRight)
+  expect(Math.max(...front.map(s => s.point.y))).toBeGreaterThan(Math.max(...back.map(s => s.point.y)))
+})
+
+test('seats shrink the colleagues to make room for more agents', () => {
+  // Arrange
+  const canvas = new Canvas(60, 30, 'quad')
+  const room = Office.room(canvas, 30, 40, 11.2)
+
+  // Act
+  const few = Scene.seats(canvas, room, 2)
+  const many = Scene.seats(canvas, room, 8)
+
+  // Assert
+  expect(many.scale).toBeLessThanOrEqual(few.scale)
+  expect(many.scale).toBeGreaterThanOrEqual(0.6)
+})
+
+test('seats never put two colleagues on top of each other', () => {
+  // Arrange
+  const canvas = new Canvas(120, 40, 'quad')
+  const room = Office.room(canvas, 60, 45, 11.2)
+
+  // Act
+  const plan = Scene.seats(canvas, room, 10)
+
+  // Assert
+  const width = Colleagues.WIDTH * plan.scale
+  for (const a of plan.seats) {
+    for (const b of plan.seats) {
+      if (a === b || a.isBack !== b.isBack) continue
+      expect(Math.abs(a.point.x - b.point.x)).toBeGreaterThanOrEqual(width)
+    }
+  }
 })

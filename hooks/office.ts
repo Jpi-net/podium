@@ -1,6 +1,6 @@
 import { Canvas, type Rgb } from './canvas'
 
-export type Room = { floorY: number; sillY: number; deskY: number; deskLeft: number; deskRight: number }
+export type Room = { floorY: number; sillY: number; deskY: number; deskLeft: number; deskRight: number; spare: number }
 
 export class Office {
   private static readonly WALL: Rgb = [36, 44, 70]
@@ -56,11 +56,11 @@ export class Office {
     const floorY = Math.round(h - Math.max(5, h * 0.12))
     const deskY = Math.round(Math.min(bustBottom - 1, floorY - 9))
     const sillY = Math.round(Math.min(deskY + 3, floorY - 8))
-    const halfDesk = Math.max(bustHalfWidth + 8, Math.min(canvas.width * 0.26, bustHalfWidth + 12))
-    return { floorY, sillY, deskY, deskLeft: Math.round((cx - halfDesk) * 2) / 2, deskRight: Math.round((cx + halfDesk) * 2) / 2 }
+    const halfDesk = Math.round((bustHalfWidth + 7.5) * 2) / 2
+    return { floorY, sillY, deskY, deskLeft: Math.round((cx - halfDesk) * 2) / 2, deskRight: Math.round((cx + halfDesk) * 2) / 2, spare: halfDesk - bustHalfWidth }
   }
 
-  static back(canvas: Canvas, room: Room, light: number, frame: number): void {
+  static back(canvas: Canvas, room: Room, light: number, frame: number, taken: readonly (readonly [number, number])[] = []): void {
     const tone = (c: Rgb): Rgb => Canvas.scale(c, light)
     const w = canvas.width
     const { floorY, sillY } = room
@@ -82,8 +82,11 @@ export class Office {
     canvas.block(0, 0, w, 1, tone(Office.BRASS))
     canvas.block(0, 1, w, 0, tone(Office.WOOD_DARK))
     for (const x of [1, w - 1.5]) canvas.block(x, 0, 0.5, 2, tone(Office.BRASS))
-    Office.plant(canvas, Math.max(7, w * 0.11), floorY, tone, frame)
-    Office.cabinet(canvas, Math.min(w - 8, w * 0.89), floorY, tone)
+    const isFree = (x0: number, x1: number): boolean => taken.every(([a, b]) => b < x0 || a > x1)
+    const plantX = Math.max(7, w * 0.11)
+    const cabinetX = Math.min(w - 8, w * 0.89)
+    if (isFree(plantX - 5, plantX + 5)) Office.plant(canvas, plantX, floorY, tone, frame)
+    if (isFree(cabinetX - 5, cabinetX + 5)) Office.cabinet(canvas, cabinetX, floorY, tone)
   }
 
   static desk(canvas: Canvas, room: Room, light: number, isLampOn: boolean, frame: number): void {
@@ -110,13 +113,13 @@ export class Office {
     canvas.block(deskLeft, deskY, width, 2, tone(Office.WOOD_TOP))
     canvas.block(deskLeft, deskY, width, 1, tone(Office.WOOD_EDGE))
     canvas.block(deskLeft + 0.5, deskY + 2, width - 1, 0.5, tone(Office.WOOD_DEEP))
-    Office.lamp(canvas, deskLeft + 3.5, deskY, tone, isLampOn)
-    Office.papers(canvas, deskLeft + 7.5, deskY, tone)
-    Office.laptop(canvas, deskRight - 9.5, deskY, tone, frame)
-    Office.mug(canvas, deskRight - 3, deskY, tone, frame)
+    Office.lamp(canvas, deskLeft + 3, deskY, tone, isLampOn)
+    if (room.spare >= 10) Office.papers(canvas, deskLeft + 6.5, deskY, tone)
+    Office.laptop(canvas, deskRight - 7.5, deskY, tone, frame)
+    Office.mug(canvas, deskRight - 1.5, deskY, tone, frame)
     if (isLampOn) {
-      canvas.glow(deskLeft + 5, deskY - 1, 18, Office.LAMP_LIGHT, 0.12)
-      canvas.glow(deskLeft + 5, deskY, 7, Office.LAMP_LIGHT, 0.22)
+      canvas.glow(deskLeft + 4.5, deskY - 1, 18, Office.LAMP_LIGHT, 0.12)
+      canvas.glow(deskLeft + 4.5, deskY, 7, Office.LAMP_LIGHT, 0.22)
     }
   }
 

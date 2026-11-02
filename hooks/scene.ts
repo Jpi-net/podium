@@ -1,6 +1,7 @@
 import type { FlowAgent, FlowEvent, FlowMain, FlowStatus } from '../types'
 import { Canvas, type Encoded, type Point, type RenderMode, type Rgb } from './canvas'
-import { Office } from './office'
+import { Colleagues } from './colleagues'
+import { Office, type Room } from './office'
 import { Effects, type Ambience, type ExitStatus, type Obstacle, type Sky } from './effects'
 import { WeatherFx } from './weather'
 import { Robots, type OrchestratorReaction, type OrchestratorState, type RobotMood } from './robots'
@@ -34,7 +35,11 @@ export type VerifPulse = { t: number; color: Rgb }
 
 export type ToolHit = { event: FlowEvent; age: number }
 
-type Fit = { scale: number; rx: number; ryTop: number; ryBottom: number; isValid: boolean; offset: number }
+type LabelAlign = 'center' | 'start' | 'end'
+
+type Seat = { point: Point; isBack: boolean; align: LabelAlign; anchor: number; room: number }
+
+type Seats = { seats: Seat[]; scale: number; pitch: number }
 
 type Placed = {
   agent: FlowAgent
@@ -51,6 +56,9 @@ type Placed = {
   tilt: number
   thrust: number
   squash: number
+  labelMax: number
+  labelAlign: LabelAlign
+  labelAnchor: number
 }
 
 export type Cable = { points: Point[]; length: number; head: Rgb; tail: Rgb; seed: number }
@@ -59,17 +67,11 @@ type Flight = { point: Point; velocity: Point; scale: number; progress: number }
 
 export class Scene {
   static readonly EXIT_MS = 3600
-  private static readonly MIN_SCALE = 0.4
-  private static readonly MAX_SCALE = 1.3
-  private static readonly QUAD_MAX_SCALE = 1.1
-  private static readonly ROBOT_TO_AVATAR = 0.75
+  private static readonly SEAT_MIN = 0.6
+  private static readonly SEAT_MAX = 1
+  private static readonly SEAT_GAP = 1
   private static readonly SCALE_STEP = 0.025
   private static readonly EDGE_MARGIN = 2
-  private static readonly LABEL_ABOVE = 5
-  private static readonly LABEL_BELOW = 7
-  private static readonly ORCHESTRATOR_LABEL = 4
-  private static readonly ORCHESTRATOR_CROWN = 5
-  private static readonly ABOVE_EPSILON = 0.01
   static readonly TOOL_COLORS: Record<ToolKind, Rgb> = {
     read: [120, 170, 255],
     edit: [105, 240, 174],
@@ -99,8 +101,6 @@ export class Scene {
   private static readonly IDLE_MS = 15_000
   private static readonly ACTIVITY_MS = 10_000
   private static readonly CABLE_STEP = 0.5
-  private static readonly HOVER_X = 0.6
-  private static readonly HOVER_Y = 0.4
   private static readonly SHADOW: Rgb = [4, 8, 20]
   private static readonly MAX_SHOWN = 10
   static readonly SLEEP_AFTER_MS = 60_000
@@ -211,8 +211,10 @@ export class Scene {
     const canvas = new Canvas(input.columns, input.rows, input.mode)
     const center: Point = { x: canvas.width / 2, y: canvas.height / 2 - 1 }
     Scene.backdrop(canvas, center, Effects.sky(input.ambience, input.frame), input.frame)
+    const bust = Scene.orchestratorHalf(canvas)
+    const room = Office.room(canvas, center.x, center.y + bust.y, bust.x)
 
-    const placed = Scene.layout(canvas, center, input)
+    const placed = Scene.layout(canvas, center, room, input)
     const running = placed.some(p => p.status === 'running')
     const isWorking = (input.isLive && input.main.isBusy) || running
     const state = Scene.orchestratorState(isWorking, input.ambience.idleMs)
@@ -221,11 +223,9 @@ export class Scene {
     const labels = Scene.labels(canvas, center, orchestratorScale, placed, state, input, ordinals)
     const obstacles = Scene.obstacles(canvas, center, orchestratorScale, placed, labels, input)
     Effects.background(canvas, input.frame, input.at, input.ambience, obstacles)
-    const bust = Scene.orchestratorHalf(canvas)
-    const room = Office.room(canvas, center.x, center.y + bust.y, bust.x)
     const light = Effects.light(input.ambience.timeOfDay)
-    Office.back(canvas, room, light, input.frame)
-    Scene.orbits(canvas, center, placed, input.frame)
+    const taken = placed.filter(p => !p.isAbove && p.exit < 1).map((p): [number, number] => [p.slot.x - (Colleagues.WIDTH * p.baseScale) / 2, p.slot.x + (Colleagues.WIDTH * p.baseScale) / 2])
+    Office.back(canvas, room, light, input.frame, taken)
 
     for (const p of placed) Scene.shadow(canvas, center, p)
     const activity = Scene.activity(input.events, input.at)
@@ -398,20 +398,6 @@ export class Scene {
     canvas.glow(center.x, center.y, Math.min(canvas.width, canvas.height) * 0.42, sky.halo, 0.08)
   }
 
-  private static orbits(canvas: Canvas, center: Point, placed: Placed[], frame: number): void {
-    const first = placed.find(p => p.exit === 0)
-    const radius = first ? Math.hypot(first.slot.x - center.x, first.slot.y - center.y) : Math.min(canvas.width, canvas.height) * 0.36
-    canvas.strokeCircle(center.x, center.y, radius, 0.18, Theme.FAINT, 0.35)
-    canvas.strokeCircle(center.x, center.y, radius * 0.55, 0.12, Theme.FAINT, 0.25)
-    const a = frame * 0.03
-    canvas.arc(center.x, center.y, radius * 0.55, a, a + 1.1, 0.25, Theme.ACCENT, 0.45)
-    canvas.arc(center.x, center.y, radius, -a * 0.6, -a * 0.6 + 0.7, 0.25, Theme.ACCENT, 0.25)
-  }
-
-  private static angle(i: number, n: number, offset: number): number {
-    return -Math.PI / 2 + ((i + offset) * 2 * Math.PI) / n + (n <= 2 ? Math.PI / 2 : 0)
-  }
-
   private static orchestratorScale(canvas: Canvas): number {
     const base = Math.max(0.55, Math.min(1, canvas.height / 70))
     return canvas.mode === 'hd' ? base : Math.max(0.85, Math.min(1, base * Robots.ORCHESTRATOR_QUAD_BOOST))
@@ -434,71 +420,20 @@ export class Scene {
     return { x: center.x + dx * reach, y: center.y + dy * reach }
   }
 
-  private static fit(canvas: Canvas, center: Point, ambience: Ambience, n: number): Fit {
-    const orchestrator = Scene.orchestratorHalf(canvas)
-    const orchestratorScale = Scene.orchestratorScale(canvas)
-    const crown = Math.max(0, center.y - Robots.orchestratorTop(center.y, orchestratorScale) - orchestrator.y) + Effects.hatHeight(ambience, Scene.orchestratorHatWidth(orchestratorScale) / 0.7)
-    const offsets = n > 2 ? [0, 0.5] : [0]
-    const max = Math.min(canvas.mode === 'quad' ? Scene.QUAD_MAX_SCALE : Scene.MAX_SCALE, Scene.ROBOT_TO_AVATAR * orchestratorScale)
-    let result = Scene.fitAt(canvas, center, n, Scene.MIN_SCALE, orchestrator, crown, 0)
-    for (const offset of offsets) {
-      for (let s = max; s > Scene.MIN_SCALE; s -= Scene.SCALE_STEP) {
-        if (result.isValid && s <= result.scale) break
-        const candidate = Scene.fitAt(canvas, center, n, s, orchestrator, crown, offset)
-        if (candidate.isValid) {
-          result = candidate
-          break
-        }
-      }
-    }
-    return result
-  }
-
-  private static fitAt(canvas: Canvas, center: Point, n: number, scale: number, orchestrator: Point, crown: number, offset: number): Fit {
-    const halfWidth = (Robots.WIDTH * scale) / 2
-    const halfHeight = (Robots.HEIGHT * scale) / 2
-    const rx = Math.max(0, canvas.width / 2 - halfWidth - Scene.EDGE_MARGIN)
-    let topReach = 0
-    let bottomReach = 0
-    for (let i = 0; i < n; i++) {
-      const sin = Math.sin(Scene.angle(i, n, offset))
-      if (sin < -Scene.ABOVE_EPSILON) topReach = Math.max(topReach, -sin)
-      else if (sin > Scene.ABOVE_EPSILON) bottomReach = Math.max(bottomReach, sin)
-    }
-    const roomAbove = Math.max(0, center.y - halfHeight - Scene.LABEL_ABOVE)
-    const roomBelow = Math.max(0, canvas.height - center.y - halfHeight - Scene.LABEL_BELOW)
-    const ryTop = topReach > 0 ? roomAbove / topReach : roomAbove
-    const ryBottom = bottomReach > 0 ? roomBelow / bottomReach : roomBelow
-    let isValid = center.y + halfHeight + Scene.LABEL_BELOW <= canvas.height
-    const ring = Math.min(rx, ((ryTop + ryBottom) / 2) * 1.25)
-    if ((2 * Math.PI * ring) / Math.max(n, 3) < Robots.WIDTH * scale + 3) isValid = false
-    for (let i = 0; i < n && isValid; i++) {
-      const angle = Scene.angle(i, n, offset)
-      const dx = Math.abs(Math.cos(angle) * rx)
-      const sin = Math.sin(angle)
-      const dy = sin * (sin < 0 ? ryTop : ryBottom)
-      const clearY = dy > 0 ? halfHeight + orchestrator.y + Scene.ORCHESTRATOR_LABEL : halfHeight + orchestrator.y + Scene.ORCHESTRATOR_CROWN + crown
-      if (dx < halfWidth + orchestrator.x + 1 && Math.abs(dy) < clearY) isValid = false
-    }
-    return { scale, rx, ryTop, ryBottom, isValid, offset }
-  }
-
-  private static layout(canvas: Canvas, center: Point, input: SceneInput): Placed[] {
+  private static layout(canvas: Canvas, center: Point, room: Room, input: SceneInput): Placed[] {
     const onStage = Scene.visibleAt(input.agents, input.at).filter(a => Scene.isOnStage(a, input.at))
     const running = onStage.filter(a => Scene.statusAt(a, input.at) === 'running')
     const leaving = onStage.filter(a => Scene.statusAt(a, input.at) !== 'running').sort((a, b) => b.endedAt - a.endedAt)
-    const chosen = [...running, ...leaving].slice(0, Scene.MAX_SHOWN).sort((a, b) => a.startedAt - b.startedAt)
+    const plan = Scene.seats(canvas, room, Math.min(Scene.MAX_SHOWN, onStage.length))
+    const chosen = [...running, ...leaving].slice(0, Math.min(Scene.MAX_SHOWN, plan.seats.length)).sort((a, b) => a.startedAt - b.startedAt)
     const ids = new Set(chosen.map(a => a.id))
     for (const id of Array.from(input.positions.keys())) if (!ids.has(id)) input.positions.delete(id)
-    const n = chosen.length
-    if (n === 0) return []
-
-    const fit = Scene.fit(canvas, center, input.ambience, n)
-    const baseScale = fit.scale
+    if (chosen.length === 0) return []
+    const baseScale = plan.scale
 
     return chosen.map((agent, i) => {
-      const angle = Scene.angle(i, n, fit.offset)
-      const slot: Point = { x: center.x + Math.cos(angle) * fit.rx, y: center.y + Math.sin(angle) * (Math.sin(angle) < 0 ? fit.ryTop : fit.ryBottom) }
+      const seat: Seat = plan.seats[i] ?? plan.seats[0] ?? { point: center, isBack: false, align: 'center', anchor: center.x, room: Scene.LABEL_MAX }
+      const slot = seat.point
       const status = Scene.statusAt(agent, input.at)
       const seed = Canvas.hash(Scene.stableHash(agent.id), 29)
       const age = input.at - agent.startedAt
@@ -507,45 +442,82 @@ export class Scene {
       const previous = input.positions.get(agent.id)
       const dt = Math.max(0, Math.min(Scene.MAX_DT_MS, input.dt))
       let current: Point = slot
-      let velocity: Point = { x: 0, y: 0 }
-      if (flight) {
-        current = flight.point
-        velocity = flight.velocity
-      } else if (input.isLive && previous) {
-        current = Scene.follow(previous, slot, dt)
-        if (dt > 0) velocity = { x: ((current.x - previous.x) * 1000) / dt, y: ((current.y - previous.y) * 1000) / dt }
-      }
+      if (flight) current = flight.point
+      else if (input.isLive && previous) current = Scene.follow(previous, slot, dt)
       input.positions.set(agent.id, current)
       const landing = flight ? 0 : Math.min(1, Math.max(0, (age - Scene.FLIGHT_MS) / Scene.LAND_MS))
-      const hover = Scene.hover(seed, input.at)
-      const speed = Math.hypot(velocity.x, velocity.y)
       const exit = status === 'running' ? 0 : Math.max(0.0001, (input.at - agent.endedAt) / Scene.EXIT_MS)
       return {
         agent,
         status,
         slot,
-        x: current.x + hover.x * landing,
-        y: current.y + hover.y * landing,
+        x: current.x,
+        y: current.y,
         scale: baseScale * (flight ? flight.scale : 1),
         baseScale,
         index: i,
         exit,
-        isAbove: Math.sin(angle) < -Scene.ABOVE_EPSILON,
+        isAbove: seat.isBack,
         seed,
-        tilt: Math.max(-0.4, Math.min(0.4, velocity.x / 45)),
-        thrust: Math.max(flight ? 0.95 - 0.45 * flight.progress : 0, Math.min(1, speed / 35)),
+        tilt: 0,
+        thrust: 0,
         squash: flight ? -0.25 * Math.sin(Math.PI * flight.progress) : Scene.squash(landing),
+        labelMax: Math.max(6, Math.min(Scene.LABEL_MAX, seat.room)),
+        labelAlign: seat.align,
+        labelAnchor: seat.anchor,
       }
     })
   }
 
-  static hover(seed: number, at: number): Point {
-    const s = at / 1000
-    const phase = seed * Math.PI * 2
-    return {
-      x: Scene.HOVER_X * (0.7 * Math.sin((s * Math.PI * 2) / 7.3 + phase * 3) + 0.3 * Math.sin((s * Math.PI * 2) / 3.7 + phase * 5)),
-      y: Scene.HOVER_Y * (0.65 * Math.sin((s * Math.PI * 2) / 2.6 + phase * 7) + 0.35 * Math.sin((s * Math.PI * 2) / 6.1 + phase * 2)),
+  static seats(canvas: Canvas, room: Room, n: number): Seats {
+    const margin = Scene.EDGE_MARGIN
+    const left = Math.max(0, room.deskLeft - Scene.SEAT_GAP - margin)
+    const right = Math.max(0, canvas.width - margin - room.deskRight - Scene.SEAT_GAP)
+    let scale = Scene.SEAT_MAX
+    let pitch = Colleagues.WIDTH * scale + Scene.SEAT_GAP
+    let perLeft = 0
+    let perRight = 0
+    const steps = Math.round((Scene.SEAT_MAX - Scene.SEAT_MIN) / (Scene.SCALE_STEP * 2))
+    for (let k = 0; k <= steps; k++) {
+      const s = Math.round((Scene.SEAT_MAX - k * Scene.SCALE_STEP * 2) * 1000) / 1000
+      scale = s
+      pitch = Colleagues.WIDTH * s + Scene.SEAT_GAP
+      perLeft = Math.floor((left + Scene.SEAT_GAP) / pitch)
+      perRight = Math.floor((right + Scene.SEAT_GAP) / pitch)
+      if (2 * (perLeft + perRight) >= n) break
     }
+    const half = (Colleagues.HEIGHT * scale) / 2
+    const width = Colleagues.WIDTH * scale
+    const rows = [
+      { y: room.floorY + 0.5 - half, isBack: false },
+      { y: room.sillY + 1 - half, isBack: true },
+    ]
+    const seats: Seat[] = []
+    if (perLeft + perRight === 0) {
+      const per = Math.max(1, Math.floor((canvas.width - 2 * margin + Scene.SEAT_GAP) / pitch))
+      for (let k = 0; k < per; k++) {
+        const x = margin + width / 2 + k * pitch
+        seats.push({ point: { x, y: rows[0]?.y ?? 0 }, isBack: false, align: 'center', anchor: x, room: Math.floor(pitch) - 1 })
+      }
+      return { seats, scale, pitch }
+    }
+    for (const row of rows) {
+      for (let k = 0; k < Math.max(perLeft, perRight); k++) {
+        const inner = k === 0
+        const middle = canvas.width / 2
+        if (k < perLeft) {
+          const x = room.deskLeft - Scene.SEAT_GAP - k * pitch - width / 2
+          const edge = x - width / 2
+          seats.push({ point: { x, y: row.y }, isBack: row.isBack, align: inner ? 'start' : 'center', anchor: inner ? edge : x, room: inner ? Math.floor(middle - edge) - 1 : Math.floor(pitch) - 1 })
+        }
+        if (k < perRight) {
+          const x = room.deskRight + Scene.SEAT_GAP + k * pitch + width / 2
+          const edge = x + width / 2
+          seats.push({ point: { x, y: row.y }, isBack: row.isBack, align: inner ? 'end' : 'center', anchor: inner ? edge : x, room: inner ? Math.floor(edge - middle) - 1 : Math.floor(pitch) - 1 })
+        }
+      }
+    }
+    return { seats, scale, pitch }
   }
 
   private static flight(origin: Point, slot: Point, age: number): Flight | undefined {
@@ -575,8 +547,8 @@ export class Scene {
     boxes.push({ x: center.x - half.x, y: top, w: half.x * 2, h: center.y + half.y - top })
     for (const p of placed) {
       if (p.exit >= 1) continue
-      const h = (Robots.HEIGHT * p.baseScale) / 2
-      const w = Robots.WIDTH * p.baseScale
+      const h = (Colleagues.HEIGHT * p.baseScale) / 2
+      const w = Colleagues.WIDTH * p.baseScale
       boxes.push({ x: p.slot.x - w / 2, y: p.slot.y - h, w, h: h * 2 })
     }
     return boxes
@@ -653,7 +625,7 @@ export class Scene {
     const isWorking = p.status === 'running'
     const latest = isWorking ? Scene.latestTool(p.agent.id, input.events, input.at) : undefined
     const label = latest?.event.label ?? (input.isLive && isWorking ? p.agent.tool : '')
-    Robots.draw(canvas, x, y, scale, {
+    Colleagues.draw(canvas, x, y, scale, {
       type: p.agent.type,
       model: p.agent.model,
       mood: Scene.mood(p.status),
@@ -665,7 +637,7 @@ export class Scene {
       squash: p.exit > 0 ? 0 : p.squash,
       toolColor: label === '' ? undefined : Scene.TOOL_COLORS[Scene.toolKind(label)],
     })
-    if (ordinal > 0 && p.exit === 0 && scale > 0.3) Scene.badge(canvas, x, y + (Robots.HEIGHT * scale) / 2 + 0.2, ordinal, color)
+    if (ordinal > 0 && p.exit === 0 && scale > 0.3) Scene.badge(canvas, x, y + (Colleagues.HEIGHT * scale) / 2 + 0.2, ordinal, color)
   }
 
 
@@ -684,12 +656,12 @@ export class Scene {
         presence = 1 - pull
       }
     }
-    const half = (Robots.HEIGHT * p.baseScale) / 2
+    const half = (Colleagues.HEIGHT * p.baseScale) / 2
     const ground = p.slot.y + half + 0.9
-    const lift = Math.max(0, ground - (y + (Robots.HEIGHT * p.scale) / 2))
+    const lift = Math.max(0, ground - (y + (Colleagues.HEIGHT * p.scale) / 2))
     const near = Math.max(0, 1 - lift / 10) * presence
     if (near <= 0.02) return
-    const rx = Robots.WIDTH * p.baseScale * (0.36 - 0.012 * Math.min(10, lift)) * (1 + 0.25 * Math.max(0, p.squash))
+    const rx = Colleagues.WIDTH * p.baseScale * (0.36 - 0.012 * Math.min(10, lift)) * (1 + 0.25 * Math.max(0, p.squash))
     canvas.fillEllipse(x, ground, rx * 1.35, 0.95, Scene.SHADOW, 0.16 * near)
     canvas.fillEllipse(x, ground, rx, 0.6, Scene.SHADOW, 0.34 * near)
   }
@@ -705,14 +677,14 @@ export class Scene {
     const dx = p.x - from.x
     const dy = p.y - from.y
     const length = Math.max(1, Math.hypot(dx, dy))
-    if (length < Robots.WIDTH * 0.6 * p.scale + 4) return
+    if (length < Colleagues.WIDTH * 0.6 * p.scale + 4) return
     const ux = dx / length
     const uy = dy / length
     const swirl = length * (parent ? 0.1 : 0.16)
-    const reachX = parent ? Robots.WIDTH * 0.42 * parent.scale : 5
-    const reachY = parent ? Robots.HEIGHT * 0.42 * parent.scale : 4
+    const reachX = parent ? Colleagues.WIDTH * 0.42 * parent.scale : 5
+    const reachY = parent ? Colleagues.HEIGHT * 0.42 * parent.scale : 4
     const p0: Point = { x: from.x + ux * reachX, y: from.y + uy * reachY }
-    const p3: Point = { x: p.x - ux * (Robots.WIDTH * 0.42 * p.scale), y: p.y - uy * (Robots.HEIGHT * 0.42 * p.scale) }
+    const p3: Point = { x: p.x - ux * (Colleagues.WIDTH * 0.42 * p.scale), y: p.y - uy * (Colleagues.HEIGHT * 0.42 * p.scale) }
     const p1: Point = { x: p0.x + dx * 0.3 - uy * swirl, y: p0.y + dy * 0.3 + ux * swirl }
     const p2: Point = { x: p3.x - dx * 0.3 - uy * swirl * 0.4, y: p3.y - dy * 0.3 + ux * swirl * 0.4 }
     const accent = Robots.accent(p.agent.type)
@@ -1006,10 +978,10 @@ export class Scene {
         continue
       }
       const p = placed.find(o => o.agent.id === id)
-      if (!p || p.exit > 0 || p.scale < Scene.MIN_SCALE * 0.5) continue
+      if (!p || p.exit > 0 || p.scale < Scene.SEAT_MIN * 0.5) continue
       const dir = p.x >= center.x ? 1 : -1
-      const head = p.y - (Robots.HEIGHT * p.scale) / 2
-      Scene.bubble(canvas, { x: p.x + dir * Robots.WIDTH * p.scale * 0.18, y: head }, dir, hit, Math.max(0.75, p.scale), seed)
+      const head = p.y - (Colleagues.HEIGHT * p.scale) / 2
+      Scene.bubble(canvas, { x: p.x + dir * Colleagues.WIDTH * p.scale * 0.18, y: head }, dir, hit, Math.max(0.75, p.scale), seed)
     }
   }
 
@@ -1096,7 +1068,7 @@ export class Scene {
       const finaleElapsed = p.exit * Scene.EXIT_MS
       if (p.exit > 0 && finaleElapsed >= Scene.FINALE_MS) continue
       const color = Robots.accent(p.agent.type)
-      const half = (Robots.HEIGHT * p.baseScale) / 2
+      const half = (Colleagues.HEIGHT * p.baseScale) / 2
       const rawRow = p.isAbove
         ? Math.floor((p.slot.y - half - 1) / 2) - 2
         : Math.ceil((p.slot.y + half + 2) / 2)
@@ -1105,27 +1077,28 @@ export class Scene {
         const isKilled = p.status === 'killed'
         const isFailed = p.status === 'failed' || isKilled
         const text = isKilled ? `■ ${p.agent.type}` : isFailed ? `✗ ${p.agent.type} · failed` : `✓ ${p.agent.type}`
-        labels.push(Scene.label(canvas, p.agent.id, p.slot.x, nameRow, Theme.truncate(text, Scene.LABEL_MAX), isKilled ? Theme.MUTED : isFailed ? Theme.KO : Theme.OK, true, false))
+        labels.push(Scene.label(canvas, p.agent.id, p.labelAnchor, nameRow, Theme.truncate(text, p.labelMax), isKilled ? Theme.MUTED : isFailed ? Theme.KO : Theme.OK, true, false, p.labelAlign))
         continue
       }
       const glyph = Theme.statusGlyph(p.status, input.frame + p.index)
       const ordinal = ordinals.get(p.agent.id) ?? 0
-      const room = Scene.LABEL_MAX - Array.from(`${glyph} ${p.agent.type} · `).length
+      const room = p.labelMax - Array.from(`${glyph} ${p.agent.type} · `).length
       const hint = ordinal > 0 && room > 2 ? Array.from(Scene.hint(p.agent.description)).slice(0, room).join('').trimEnd() : ''
       const suffix = ordinal === 0 ? '' : hint !== '' ? ` · ${hint}` : ` ${Scene.SUPERSCRIPTS[Math.min(ordinal, 9)] ?? ordinal}`
-      const name = Theme.truncate(`${glyph} ${p.agent.type}${suffix}`.trimEnd(), Scene.LABEL_MAX)
-      labels.push(Scene.label(canvas, p.agent.id, p.slot.x, nameRow, name, Canvas.mix(color, Theme.WHITE, 0.3), true, false))
+      const name = Theme.truncate(`${glyph} ${p.agent.type}${suffix}`.trimEnd(), p.labelMax)
+      labels.push(Scene.label(canvas, p.agent.id, p.labelAnchor, nameRow, name, Canvas.mix(color, Theme.WHITE, 0.3), true, false, p.labelAlign))
       const tool = Scene.toolAt(p.agent, input.events, input.at, input.isLive)
       const detail = tool !== '' ? `${Theme.duration(input.at - p.agent.startedAt)} · ${tool}` : Theme.duration(input.at - p.agent.startedAt)
-      labels.push(Scene.label(canvas, p.agent.id, p.slot.x, nameRow + 1, Theme.truncate(detail, 24), Theme.MUTED, false, false))
+      labels.push(Scene.label(canvas, p.agent.id, p.labelAnchor, nameRow + 1, Theme.truncate(detail, p.labelMax), Theme.MUTED, false, false, p.labelAlign))
     }
     return labels
   }
 
-  private static label(canvas: Canvas, agentId: string, x: number, row: number, value: string, color: Rgb, isPrimary: boolean, isMain: boolean): GraphLabel {
+  private static label(canvas: Canvas, agentId: string, x: number, row: number, value: string, color: Rgb, isPrimary: boolean, isMain: boolean, align: LabelAlign = 'center'): GraphLabel {
     const text = Theme.truncate(value, canvas.columns - 2)
     const length = Array.from(text).length
-    const column = Math.max(0, Math.min(canvas.columns - length, Math.round(x - length / 2)))
+    const start = align === 'start' ? Math.round(x) : align === 'end' ? Math.round(x) - length : Math.round(x - length / 2)
+    const column = Math.max(0, Math.min(canvas.columns - length, start))
     return { agentId, column, row, text, color, isPrimary, isMain }
   }
 
