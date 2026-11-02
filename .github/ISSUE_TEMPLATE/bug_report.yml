@@ -1,0 +1,36 @@
+name: Bug report
+description: Something in /maestro or the /maestro-stage panel does not work as described
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what you saw instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: "1. Run /maestro existing\n2. ..."
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Versions
+      description: Output of `claude --version` and the maestro version from `/plugin`.
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Surface
+      options: [Terminal, Desktop app, VS Code, Other]
+  - type: textarea
+    id: logs
+    attributes:
+      label: Debug log excerpt
+      description: Lines starting with `maestro:` from `claude --debug`. Remove anything private.
+      render: text

@@ -1,0 +1,25 @@
+{
+  "name": "maestro",
+  "displayName": "Maestro",
+  "version": "0.1.0",
+  "description": "Conduct Claude Code like an orchestra: /maestro builds and maintains your project's .claude/ (CLAUDE.md, path-scoped rules, model-tiered agents, role skills, guard hooks), and /maestro-stage opens a live side panel of the flow, the verification, the reviews and the commands.",
+  "author": {
+    "name": "Julien Pierlot",
+    "url": "https://github.com/Jpi-net"
+  },
+  "homepage": "https://github.com/Jpi-net/maestro",
+  "repository": "https://github.com/Jpi-net/maestro",
+  "license": "MIT",
+  "keywords": [
+    "orchestration",
+    "agents",
+    "subagents",
+    "workflow",
+    "hooks",
+    "panel",
+    "setup",
+    "claude-md"
+  ],
+  "icon": "./assets/icon.png",
+  "types": "./types/index.d.ts"
+}

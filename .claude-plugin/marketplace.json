@@ -1,0 +1,19 @@
+{
+  "name": "maestro",
+  "owner": {
+    "name": "Julien Pierlot",
+    "url": "https://github.com/Jpi-net"
+  },
+  "metadata": {
+    "description": "Maestro, an orchestrator for Claude Code"
+  },
+  "plugins": [
+    {
+      "name": "maestro",
+      "source": "./",
+      "description": "Builds an orchestrated .claude/ setup for any repository and shows the flow live in a side panel.",
+      "category": "development",
+      "homepage": "https://github.com/Jpi-net/maestro"
+    }
+  ]
+}
