@@ -1,7 +1,7 @@
 # Maestro
 
 [![CI](https://github.com/Jpi-net/maestro/actions/workflows/ci.yml/badge.svg)](https://github.com/Jpi-net/maestro/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/Jpi-net/maestro/blob/main/LICENSE)
 
 **Conduct Claude Code like an orchestra.** Maestro sets up a repository so that the main thread plans and delegates, model-tiered experts work in parallel on disjoint files, verification mirrors CI, reviews run in parallel and history stays clean. Then it shows that flow live, in a side panel.
 
@@ -112,7 +112,7 @@ The scene reacts to the work: rain on the office window under a grey sky while v
 
 ## Develop
 
-See [CONTRIBUTING.md](CONTRIBUTING.md).
+See [CONTRIBUTING.md](https://github.com/Jpi-net/maestro/blob/main/CONTRIBUTING.md).
 
 ```bash
 claude --plugin-dir . --debug    # run with the plugin loaded from the clone
@@ -122,4 +122,4 @@ claude plugin test .
 
 ## License
 
-[MIT](LICENSE)
+[MIT](https://github.com/Jpi-net/maestro/blob/main/LICENSE)

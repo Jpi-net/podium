@@ -10,7 +10,7 @@
   "plugins": [
     {
       "name": "maestro",
-      "source": "./",
+      "source": "./plugin",
       "description": "Builds an orchestrated .claude/ setup for any repository and shows the flow live in a side panel.",
       "category": "development",
       "homepage": "https://github.com/Jpi-net/maestro"

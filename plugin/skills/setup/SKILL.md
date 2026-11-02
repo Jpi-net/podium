@@ -25,7 +25,7 @@ Read these references when the step needs them, not all upfront:
 - `references/merge.md`: how to write without destroying the user's work.
 - `templates/README.md`: the template files and their `{{placeholders}}`.
 
-The skill's own folder is `${CLAUDE_PLUGIN_ROOT}/skills/setup` when the variable is set; otherwise locate it with `ls ~/.claude/plugins/*/maestro/skills/setup ~/.claude/mods/maestro/skills/setup 2>/dev/null`. Read templates from there.
+The skill's own folder is `${CLAUDE_PLUGIN_ROOT}/skills/setup` when the variable is set; otherwise locate it with `find ~/.claude/plugins ~/.claude/mods -type d -path '*maestro*/skills/setup' 2>/dev/null | sort -V | tail -1` (on Windows without a POSIX shell: `Get-ChildItem -Recurse -Directory "$HOME/.claude/plugins" | Where-Object FullName -like '*maestro*skills*setup' | Select-Object -Last 1`). Read templates from there.
 
 Keep a checklist of the steps and report progress to the user with one short line per step.
 

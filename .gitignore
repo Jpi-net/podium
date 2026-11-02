@@ -1,4 +1,4 @@
-.claude-plugin/types/
+plugin/.claude-plugin/types/
 .mcpb-cache/
 node_modules/
 .DS_Store
