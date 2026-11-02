@@ -118,7 +118,7 @@ export class Rules {
       fix: 'assign the file to a single expert and rerun the other on a disjoint partition',
     },
     'ai-mention': {
-      why: 'no AI mention in the code, commits, branches or pull requests',
+      why: 'no AI attribution in commits, branches or pull requests',
       fix: 'reword the text without any reference to the tool before committing or publishing',
     },
     hook: {
@@ -141,8 +141,20 @@ export class Rules {
 
 
   private static readonly GENERATED = /(^|\/)(service-proxies|http-proxies|app-permissions)\.ts$|\.g\.cs$/
-  private static readonly AI_WORDS = /\b(claude|anthropic|co-authored-by|generated with|llm)\b|🤖/i
-  private static readonly GIT_ARTEFACT = /\b(git\s+(commit|checkout\s+-b|switch\s+-c|branch|tag|push)|az\s+repos\s+pr|gh\s+pr|glab\s+mr)\b/
+  private static readonly ASSISTANTS = String.raw`claude(?:\s+code)?|anthropic|chatgpt|openai|gpt-?\d|copilot|gemini|codeium|an?\s+(?:ai|llm)(?:\s+assistant)?|ai|llm`
+  private static readonly FORBIDDEN_ATTRIBUTION = new RegExp([
+    String.raw`co-authored-by:[^\n]*\b(?:${Rules.ASSISTANTS}|assistant|noreply@anthropic\.com)\b`,
+    String.raw`\b(?:generated|written|authored|created|made|produced|assisted|drafted)\s+(?:with|by|using)\s+(?:\S+\s+){0,2}[\[(*_"'\`]*(?:${Rules.ASSISTANTS})\b`,
+    String.raw`\bAI[- ](?:generated|assisted|written)\b`,
+    '🤖',
+  ].join('|'), 'i')
+  private static readonly ASSISTANT_NAMES = /\b(claude|anthropic|chatgpt|copilot|llm|opus|sonnet|haiku)\b/i
+  private static readonly MODEL_ATTRIBUTION = /\b(written|authored|created|made|produced|generated|assisted|drafted|co-?authored)\s+(with|by|using)\s+(\S+\s+){0,2}(opus|sonnet|haiku)\b|\b(opus|sonnet|haiku)[\s-]+\d/i
+  private static readonly TECHNICAL_TOKENS = /(?:[A-Za-z]:)?[\w.\\/~-]*?[\\/](?:claude-[\w-]+|\.claude)[\\/][^\s'")]*|(?:^|[\s(`'"])\.claude\b\/?|\$\{?(?:CLAUDE_PROJECT_DIR|CLAUDE_PLUGIN_ROOT|TMPDIR|TEMP|TMP)\}?|%(?:TEMP|TMP)%/g
+  private static readonly REVIEW_REQUEST = /^(pr|mr|repos pr)\b/
+  private static readonly MESSAGE_FLAGS = ['-m', '--message'] as const
+  private static readonly REQUEST_FLAGS = ['--title', '-t', '--body', '-b', '--description', '-d', '--message', '-m'] as const
+  private static readonly PASS_LINE = /^\s*(\(pass\)|✓|ok \d|PASS\b)/
   static readonly PR_CREATE = /\b(az\s+repos\s+pr|gh\s+pr|glab\s+mr)\s+create\b/
   private static readonly TS_FREE_FUNCTION =
     /^(export\s+)?(default\s+)?(async\s+)?function[\s*]|^(export\s+)?(const|let)\s+[A-Za-z_$][\w$]*\s*(:\s*[^=]+)?=\s*(async\s+)?(\([^)]*\)|[A-Za-z_$][\w$]*)\s*(:\s*[^=]+)?=>/
@@ -291,10 +303,6 @@ export class Rules {
       const f = context.functionCandidates.find(l => Rules.TS_FREE_FUNCTION.test(l))
       if (f !== undefined) hits.push({ level: 'warn', rule: 'function', detail: f.trim() })
     }
-    if (checks.aiMention) {
-      const ai = added.find(l => Rules.AI_WORDS.test(Rules.withoutPaths(l)))
-      if (ai !== undefined) hits.push({ level: 'error', rule: 'ai-mention', detail: ai.trim() })
-    }
     const legacy = checks.legacy
     if (legacy && context.isNewFile && Rules.isFeatureBranch(context.branch) && Project.matches(legacy.pattern, p)) {
       hits.push({ level: 'warn', rule: 'v1', detail: `new ${legacy.short ?? 'legacy'} file on a feature: new code goes in ${legacy.current}` })
@@ -326,8 +334,9 @@ export class Rules {
 
   static inspectCommand(command: string, context: CommandContext): RuleHit[] {
     const hits: RuleHit[] = []
-    if (Rules.snapshot.manifest.checks.aiMention && Rules.GIT_ARTEFACT.test(command) && Rules.AI_WORDS.test(Rules.withoutPaths(command))) {
-      hits.push({ level: 'error', rule: 'ai-mention', detail: Rules.firstLine(command) })
+    if (Rules.snapshot.manifest.checks.aiMention) {
+      const text = Rules.artefactText(command)
+      if (Rules.mentionsAssistant(text)) hits.push({ level: 'error', rule: 'ai-mention', detail: Rules.firstLine(text) })
     }
     const image = Rules.snapshot.manifest.checks.integrationImage
     if (image && Project.matches(image.command, command)) {
@@ -361,7 +370,8 @@ export class Rules {
 
   static isFailure(text: string, isError: boolean): boolean {
     if (isError) return true
-    return /Exit code [1-9]|Build FAILED|\berror [A-Z]{2,4}\d{3,5}\b|Failed!\s+-\s+Failed:\s+[1-9]|✖ [1-9]\d* problems?|\b[1-9]\d* failed\b|^FAIL\b|^--- FAIL:|error\[E\d{4}\]|npm ERR!|^ERR!|BUILD FAILURE|BUILD FAILED|^FAILED |Tests:.*\b[1-9]\d* failed|SyntaxError:|Traceback \(most recent call last\)/m.test(text)
+    const body = text.split(/\r?\n/).filter(l => !Rules.PASS_LINE.test(l)).join('\n')
+    return /Exit code [1-9]|Build FAILED|\berror [A-Z]{2,4}\d{3,5}\b|Failed!\s+-\s+Failed:\s+[1-9]|✖ [1-9]\d* problems?|\b[1-9]\d* fail(ed)?\b|^FAIL\b|^--- FAIL:|error\[E\d{4}\]|npm ERR!|^ERR!|BUILD FAILURE|BUILD FAILED|^FAILED |Tests:.*\b[1-9]\d* failed|SyntaxError:|Traceback \(most recent call last\)/m.test(body)
   }
 
   static layer(path: string): string {
@@ -411,7 +421,7 @@ export class Rules {
   static failureDetail(output: string): string {
     const msbuild = Rules.MSBUILD_ERROR.exec(output)
     if (msbuild !== null) return `error ${msbuild[3] ?? ''} · ${msbuild[1] ?? ''}:${msbuild[2] ?? ''}`
-    const lines = output.split(/\r?\n/).map(l => l.trim())
+    const lines = output.split(/\r?\n/).filter(l => !Rules.PASS_LINE.test(l)).map(l => l.trim())
     const coded = lines.map(l => Rules.ERROR_CODE.exec(l)?.[0]).find(l => l !== undefined)
     if (coded !== undefined) return coded.slice(0, 160)
     return (lines.find(l => Rules.FAILURE_LINE.test(l)) ?? '').slice(0, 160)
@@ -535,8 +545,112 @@ export class Rules {
     return out
   }
 
-  private static withoutPaths(text: string): string {
-    return text.replace(/\S*[\\/]\S*/g, ' ').replace(/\.claude\b/gi, ' ').replace(/claude-\d+/gi, ' ')
+  private static mentionsAssistant(text: string): boolean {
+    const cleaned = text.replace(Rules.TECHNICAL_TOKENS, ' ')
+    if (Rules.FORBIDDEN_ATTRIBUTION.test(cleaned) || Rules.MODEL_ATTRIBUTION.test(cleaned)) return true
+    return Rules.snapshot.manifest.hooks.blockModelNames === true && Rules.ASSISTANT_NAMES.test(cleaned)
+  }
+
+  private static artefactText(command: string): string {
+    try {
+      const { segments, docs } = Rules.shellSegments(command)
+      const texts: string[] = []
+      let isArtefact = false
+      for (const raw of segments) {
+        const words = [...raw]
+        while (words.length > 0 && /^\w+=/.test(words[0] ?? '')) words.shift()
+        const tool = words.shift()
+        if (tool === 'git') {
+          const found = Rules.gitTexts(words)
+          if (found !== undefined) {
+            isArtefact = true
+            texts.push(...found)
+          }
+        } else if (tool === 'gh' || tool === 'glab' || tool === 'az') {
+          if (!Rules.REVIEW_REQUEST.test(words.slice(0, 2).join(' '))) continue
+          isArtefact = true
+          texts.push(...Rules.flagValues(words, Rules.REQUEST_FLAGS))
+        }
+      }
+      return (isArtefact ? [...texts, ...docs] : texts).join('\n')
+    } catch {
+      return ''
+    }
+  }
+
+  private static gitTexts(args: string[]): string[] | undefined {
+    const rest = [...args]
+    while (rest.length > 0 && rest[0]?.startsWith('-')) rest.splice(0, rest[0] === '-C' || rest[0] === '-c' ? 2 : 1)
+    const sub = rest.shift()
+    if (sub === 'commit' || sub === 'tag') return Rules.flagValues(rest, Rules.MESSAGE_FLAGS)
+    if (sub === 'checkout' || sub === 'switch') {
+      const i = rest.findIndex(w => ['-b', '-B', '-c', '-C'].includes(w))
+      const name = i >= 0 ? rest[i + 1] : undefined
+      return name === undefined ? undefined : [name]
+    }
+    if (sub === 'branch') {
+      if (rest.some(w => w.startsWith('-') && !['-f', '--force', '-t', '--track'].includes(w))) return undefined
+      const names = rest.filter(w => !w.startsWith('-'))
+      return names.length === 0 ? undefined : names
+    }
+    return undefined
+  }
+
+  private static flagValues(words: string[], flags: readonly string[]): string[] {
+    const values: string[] = []
+    for (let i = 0; i < words.length; i++) {
+      const w = words[i] ?? ''
+      const eq = w.indexOf('=')
+      if (w.startsWith('--') && eq > 0 && flags.includes(w.slice(0, eq))) values.push(w.slice(eq + 1))
+      else if (flags.includes(w) && words[i + 1] !== undefined) values.push(words[++i] ?? '')
+      else if (/^-[A-Za-z]*m$/.test(w) && flags.includes('-m') && words[i + 1] !== undefined) values.push(words[++i] ?? '')
+      else if (/^-m.+/.test(w) && flags.includes('-m')) values.push(w.slice(2))
+    }
+    return values
+  }
+
+  private static shellSegments(command: string): { segments: string[][]; docs: string[] } {
+    const docs: string[] = []
+    const source = command.replace(/<<-?\s*(['"]?)(\w+)\1[^\n]*\n([\s\S]*?)\n\s*\2\s*(?=\n|$)/g, (_all, _q, _tag, body: string) => {
+      docs.push(body)
+      return '\n'
+    })
+    const segments: string[][] = []
+    let words: string[] = []
+    let word = ''
+    let isWord = false
+    let quote = ''
+    const endWord = (): void => {
+      if (isWord) words.push(word)
+      word = ''
+      isWord = false
+    }
+    const endSegment = (): void => {
+      endWord()
+      if (words.length > 0) segments.push(words)
+      words = []
+    }
+    for (let i = 0; i < source.length; i++) {
+      const ch = source[i] ?? ''
+      if (quote !== '') {
+        if (ch === quote) quote = ''
+        else if (ch === '\\' && quote === '"' && i + 1 < source.length) word += source[++i] ?? ''
+        else word += ch
+      } else if (ch === '"' || ch === "'") {
+        quote = ch
+        isWord = true
+      } else if (ch === '\\' && i + 1 < source.length) {
+        word += source[++i] ?? ''
+        isWord = true
+      } else if (/\s/.test(ch) && ch !== '\n') endWord()
+      else if (ch === '\n' || ch === ';' || ch === '&' || ch === '|') endSegment()
+      else {
+        word += ch
+        isWord = true
+      }
+    }
+    endSegment()
+    return { segments, docs }
   }
 
   static normalize(path: string): string {

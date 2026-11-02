@@ -300,12 +300,36 @@ export class Project {
 
   static verifSteps(snapshot: ProjectSnapshot, command: string): VerifKey[] {
     const keys: VerifKey[] = []
-    for (const part of command.split(/&&|\|\||;|\n/)) {
+    for (const part of Project.mask(command).split(/&&|\|\||;|\n/)) {
       if (Project.AUTOFIX.test(part)) continue
-      const rule = snapshot.manifest.verification.find(r => r.patterns.some(p => Project.matches(p, part)))
-      if (rule) keys.push(rule.step)
+      let best: { step: VerifKey; length: number } | undefined
+      for (const rule of snapshot.manifest.verification) {
+        const length = Math.max(0, ...rule.patterns.map(p => Project.matchLength(p, part)))
+        if (length > 0 && (best === undefined || length > best.length)) best = { step: rule.step, length }
+      }
+      if (best) keys.push(best.step)
     }
     return keys
+  }
+
+  private static matchLength(pattern: string, value: string): number {
+    if (pattern === '') return 0
+    try {
+      const m = new RegExp(pattern).exec(value)
+      return m === null ? 0 : Math.max(1, m[0].length)
+    } catch {
+      return 0
+    }
+  }
+
+  private static mask(command: string): string {
+    return command
+      .replace(/<<-?\s*(['"]?)(\w+)\1[^\n]*\n[\s\S]*?\n\s*\2\s*(?=\n|$)/g, '\n')
+      .replace(/"(?:[^"\\]|\\[\s\S])*"|'[^']*'/g, quoted => {
+        const inner = quoted.slice(1, -1)
+        if (quoted.startsWith('"') && /\$\(|`/.test(inner)) return quoted
+        return /[\s;|&<>`]/.test(inner) ? `${quoted[0]}?${quoted[0]}` : quoted
+      })
   }
 
   static layer(snapshot: ProjectSnapshot, path: string): string {

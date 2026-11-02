@@ -47,7 +47,7 @@ import { Theme } from './theme'
 
 type Ui = Elements['terminal']
 type Loose = Record<string, unknown>
-type Pending = { keys: VerifKey[]; at: number; path: string; agentId: string; isBackground: boolean; previous: string; isNewFile: boolean; command: string; gitBefore: string }
+type Pending = { keys: VerifKey[]; at: number; path: string; agentId: string; isBackground: boolean; previous: string; isNewFile: boolean; command: string; gitBefore: string; before: Partial<FlowVerif> }
 type BackgroundVerif = { keys: VerifKey[]; agentId: string; at: number; command: string }
 type TaskNotification = { taskId: string; status: string; body: string; outputFile: string }
 type PhaseState = 'pending' | 'running' | 'done' | 'failed'
@@ -383,6 +383,7 @@ class Flow {
       isNewFile: false,
       command,
       gitBefore: '',
+      before: {},
     }
   }
 
@@ -809,6 +810,7 @@ class Flow {
       if (pending.keys.length > 0) {
         await Runtime.io.verif(v => {
           const out = { ...v }
+          for (const key of pending.keys) pending.before[key] = v[key]
           for (const key of pending.keys) out[key] = { status: 'running', at: now, durationMs: 0, detail: '', agentId: pending.agentId }
           return out
         })
@@ -823,9 +825,10 @@ class Flow {
     const deny = typeof r['deny'] === 'string' ? (r['deny'] as string) : ''
     const text = typeof r['text'] === 'string' ? (r['text'] as string) : ''
     const isError = r['isError'] === true || deny !== ''
+    const isDenied = deny !== '' || (isError && !/^Exit code \d/.test(text) && Rules.isHookBlock(text.split(/\r?\n/)[0] ?? ''))
     const now = Date.now()
 
-    if (deny !== '' || (isError && Rules.isHookBlock(text))) {
+    if (isDenied) {
       await Flow.raise([{ level: 'warn', rule: 'hook', detail: (deny || text).split(/\r?\n/)[0] ?? '' }], pending.path, pending.agentId)
       void Flow.pushEvent(pending.agentId, 'hook', `${tool} denied`, true)
     } else if (isError) {
@@ -844,7 +847,16 @@ class Flow {
           command: pending.command,
         })
       }
-      if (!isBackgrounded || isError) {
+      if (isDenied) {
+        await Runtime.io.verif(v => {
+          const out = { ...v }
+          for (const key of pending.keys) {
+            const previous = pending.before[key]
+            if (previous !== undefined) out[key] = previous
+          }
+          return out
+        })
+      } else if (!isBackgrounded || isError) {
         const output = `${text}\n${typeof result?.['stdout'] === 'string' ? result['stdout'] : ''}\n${typeof result?.['stderr'] === 'string' ? result['stderr'] : ''}`
         const isKo = Rules.isFailure(output, isError)
         const detail = isKo ? Rules.failureDetail(output) : ''
@@ -942,7 +954,7 @@ class Flow {
     if (!agent || !Project.isReviewer(Runtime.project, agent.type) || answer.trim() === '') return
     const review: FlowReview = { agentId: id, type: agent.type, at: Flow.stamp(), ...Rules.review(answer) }
     await Runtime.io.reviews(list => [...list.filter(r => r.agentId !== id), review].slice(-12))
-    if (review.verdict === 'FAIL' || review.critical > 0) Flow.notify(`${agent.type}: ${review.verdict || 'review'} · ${View.plural(review.critical, 'critical issue')}`)
+    if (review.verdict === 'FAIL' || review.critical > 0) Flow.notify(`${agent.type}: ${review.verdict || 'review'}${View.reviewCounts(review) !== '' ? ` · ${View.reviewCounts(review)}` : ''}`)
   }
 
   private static parseTaskNotifications(text: string): TaskNotification[] {
@@ -1020,6 +1032,22 @@ class Flow {
     if (isKo) {
       Runtime.io.toast(`maestro ✗ ${names} failed`, { timeoutMs: 6000 })
       Flow.notify(`${names} failed (background task)`)
+    }
+  }
+
+  static async settleOrphans(): Promise<void> {
+    try {
+      const tracked = new Set(Array.from(Runtime.backgroundVerifs.values()).flatMap(entry => entry.keys))
+      const verif = await Runtime.io.readVerif()
+      const orphans = (Object.keys(verif) as VerifKey[]).filter(k => verif[k].status === 'running' && !tracked.has(k))
+      if (orphans.length === 0) return
+      await Runtime.io.verif(v => {
+        const out = { ...v }
+        for (const k of orphans) if (out[k].status === 'running') out[k] = { ...out[k], status: 'stale' }
+        return out
+      })
+    } catch {
+      return
     }
   }
 
@@ -1492,6 +1520,7 @@ class Flow {
     Runtime.pulses.clear()
     Runtime.pending.clear()
     Runtime.backgroundVerifs.clear()
+    Runtime.buffer = []
     await Flow.setAgents(() => [])
     Runtime.events = await Runtime.io.events(() => [])
     await Runtime.io.alerts(() => [])
@@ -1512,7 +1541,7 @@ class Flow {
     Runtime.comboAt = 0
     Runtime.positions.clear()
     await Flow.setView(v => ({ ...v, isReplaying: false, filter: 'essential', isWhyShown: false }))
-    if (Runtime.context) await Flow.setContext(c => ({ ...c, staleCommitAt: 0 }))
+    if (Runtime.context) await Flow.setContext(c => ({ ...c, staleCommitAt: 0, editsSinceVerif: 0 }))
     await Flow.publishStatus()
   }
 
@@ -1568,6 +1597,13 @@ class View {
         {shown !== '' && <Text color={View.hex(Theme.MUTED)}> {shown}</Text>}
       </Box>
     )
+  }
+
+  static reviewCounts(r: { critical: number; major: number; minor: number }): string {
+    if (r.critical > 0) return View.plural(r.critical, 'critical', 'critical')
+    if (r.major > 0) return View.plural(r.major, 'major', 'major')
+    if (r.minor > 0) return View.plural(r.minor, 'minor', 'minor')
+    return ''
   }
 
   static plural(n: number, word: string, many = `${word}s`): string {
@@ -1905,7 +1941,7 @@ class View {
       const name = View.reviewShort(r.type)
       const isStale = r.at < data.context.codeEditedAt
       out.push(
-        View.linkedLine(ui, `todo-review-${r.agentId}`, width, '✗', Theme.KO, `Review ${name} FAIL: ${View.plural(r.critical, 'critical', 'critical')}${isStale ? ' · stale' : ''}`, 'livraison'),
+        View.linkedLine(ui, `todo-review-${r.agentId}`, width, '✗', Theme.KO, `Review ${name} FAIL${View.reviewCounts(r) !== '' ? `: ${View.reviewCounts(r)}` : ''}${isStale ? ' · stale' : ''}`, 'livraison'),
       )
     }
     if (data.alerts.length > 0) {
@@ -2957,6 +2993,7 @@ export const register: Register = on => {
     Runtime.main = await read($, mainAtom)
     Runtime.view = await read($, viewAtom)
     Runtime.context = await read($, contextAtom)
+    await Flow.settleOrphans()
     Runtime.toolMilestone = Flow.MILESTONES.filter(m => m <= Flow.toolTotal()).pop() ?? 0
     Runtime.combo = 0
     Runtime.comboAt = 0
@@ -3032,7 +3069,7 @@ export const register: Register = on => {
       return { text: `Maestro: notifications ${isOn ? 'enabled' : 'disabled'}.` }
     }
     if (arg === 'reset') {
-      await Flow.reset()
+      await Flow.enqueue(() => Flow.reset())
       return { text: 'Maestro reset.' }
     }
     if (arg === 'accessory' || arg.startsWith('accessory ')) {
