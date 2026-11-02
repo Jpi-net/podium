@@ -4,6 +4,8 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-11-02
+
 ### Changed
 
 - The published plugin now contains only the plugin itself (plugin/): the repository's development setup, CI and project files are no longer shipped to users.
@@ -56,7 +58,8 @@ All notable changes to this project are documented here. The format follows [Kee
 - `/maestro-stage`: live side panel with five views (flow, delivery, history, context, tools), driven by `.claude/maestro.json`.
 - Panel effects tied to verification, seasonal decor, 41 avatar accessories.
 
-[Unreleased]: https://github.com/Jpi-net/maestro/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/Jpi-net/maestro/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/Jpi-net/maestro/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/Jpi-net/maestro/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/Jpi-net/maestro/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/Jpi-net/maestro/releases/tag/v0.1.0
