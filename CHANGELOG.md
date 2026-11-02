@@ -4,6 +4,8 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-11-02
+
 ### Changed
 
 - The panel's orchestrator now sits at a desk in an office: the sky shows through a window with curtains, above a panelled wall and a parquet floor with a plant, a bookcase and a rug; the desk lamp lights up in the evening and at night.
@@ -50,6 +52,7 @@ All notable changes to this project are documented here. The format follows [Kee
 - `/maestro-stage`: live side panel with five views (flow, delivery, history, context, tools), driven by `.claude/maestro.json`.
 - Panel effects tied to verification, seasonal decor, 41 avatar accessories.
 
-[Unreleased]: https://github.com/Jpi-net/maestro/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/Jpi-net/maestro/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/Jpi-net/maestro/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/Jpi-net/maestro/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/Jpi-net/maestro/releases/tag/v0.1.0
