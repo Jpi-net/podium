@@ -1,0 +1,206 @@
+{
+  "version": 1,
+  "name": "maestro",
+  "stage": "full",
+  "language": {
+    "conversation": "",
+    "artifacts": "en"
+  },
+  "versioned": true,
+  "roles": {
+    "setup": "maestro",
+    "feature": "feat",
+    "fix": "fix",
+    "investigate": "investigate",
+    "faq": "faq",
+    "review": "review-pr",
+    "comments": "pr-comments",
+    "deliver": "deliver"
+  },
+  "phases": [
+    {
+      "id": "plan",
+      "name": "Plan",
+      "short": "Plan",
+      "agents": [
+        "architect",
+        "debugger",
+        "Plan"
+      ]
+    },
+    {
+      "id": "experts",
+      "name": "Experts",
+      "short": "Experts",
+      "agents": [
+        "panel-expert",
+        "setup-expert",
+        "test-expert",
+        "doc-writer",
+        "devops"
+      ]
+    },
+    {
+      "id": "verify",
+      "name": "Verify",
+      "short": "Verify",
+      "agents": [
+        "lint-runner"
+      ]
+    },
+    {
+      "id": "review",
+      "name": "Reviews",
+      "short": "Reviews",
+      "agents": [
+        "code-reviewer",
+        "security-reviewer"
+      ]
+    }
+  ],
+  "reviewers": [
+    {
+      "agent": "code-reviewer",
+      "label": "code review",
+      "short": "code"
+    },
+    {
+      "agent": "security-reviewer",
+      "label": "security review",
+      "short": "security"
+    }
+  ],
+  "verification": [
+    {
+      "step": "build",
+      "label": "hook syntax",
+      "patterns": [
+        "\\bnode\\s+--check\\b"
+      ],
+      "optional": true
+    },
+    {
+      "step": "lint",
+      "label": "validate",
+      "patterns": [
+        "\\bclaude\\s+plugin\\s+validate\\b"
+      ]
+    },
+    {
+      "step": "unit",
+      "label": "tests",
+      "patterns": [
+        "\\bclaude\\s+plugin\\s+test\\b"
+      ]
+    }
+  ],
+  "layers": [
+    {
+      "name": "Tests",
+      "pattern": "^tests/"
+    },
+    {
+      "name": "Panel",
+      "pattern": "^(hooks|types)/"
+    },
+    {
+      "name": "Setup skill",
+      "pattern": "^skills/"
+    },
+    {
+      "name": "Plugin and CI",
+      "pattern": "^(\\.claude-plugin/|\\.github/|\\.editorconfig$|\\.gitattributes$|\\.gitignore$|tsconfig\\.json$|LICENSE$)"
+    },
+    {
+      "name": "Documentation",
+      "pattern": "^(README|CHANGELOG|CONTRIBUTING|SECURITY)\\.md$|^assets/"
+    }
+  ],
+  "code": {
+    "roots": "^(hooks|types|tests|skills/setup/templates/hooks)/",
+    "extensions": "\\.(ts|tsx|mjs)$",
+    "ignore": "(^|/)(node_modules|\\.claude-plugin/types|\\.claude|\\.mcpb-cache)/"
+  },
+  "generated": "^\\.claude-plugin/types/",
+  "checks": {
+    "comments": true,
+    "noFreeFunction": true,
+    "aiMention": true,
+    "partition": true,
+    "hooks": true
+  },
+  "git": {
+    "base": "main",
+    "featurePrefixes": [
+      "feat/"
+    ],
+    "fixPrefixes": [
+      "fix/"
+    ],
+    "support": "",
+    "workItem": ""
+  },
+  "theme": "",
+  "hooks": {
+    "protectedBranches": "(?!)",
+    "commitPattern": "^(?!.*\\.$)[A-Z].{1,71}$",
+    "commitExample": "Seat the orchestrator at a desk in an office",
+    "prDraft": false,
+    "commentAllow": "^\\s*//\\s*(Arrange|Act|Assert)\\b",
+    "partitions": {
+      "panel-expert": "^(hooks|types)/",
+      "setup-expert": "^skills/",
+      "test-expert": "^tests/",
+      "doc-writer": "^(README|CHANGELOG|CONTRIBUTING|SECURITY)\\.md$|^assets/",
+      "devops": "^(\\.github/|\\.claude-plugin/(?!types/)|\\.editorconfig$|\\.gitattributes$|\\.gitignore$|tsconfig\\.json$|LICENSE$)"
+    },
+    "readOnlyAgents": [
+      "architect",
+      "debugger",
+      "code-reviewer",
+      "security-reviewer",
+      "lint-runner",
+      "Explore",
+      "Plan"
+    ],
+    "safeRemove": "(^|/)(node_modules|dist|build|coverage|tmp|\\.mcpb-cache)/?$|scratchpad",
+    "secrets": "(^|/)\\.env(\\.(?!example|template)[\\w.-]+)?$|\\.(pem|key|p12|pfx)$|(^|/)secrets?/",
+    "workItemCommand": "",
+    "workItemMention": ""
+  },
+  "generatedFiles": {
+    ".claude/.gitignore": "0d82cd1b373cb574582b2396826d622e577a13ace9dadc6eea2afbee77e90fb9",
+    ".claude/CLAUDE.md": "ae76da060ff366a9cf342d3defe781950e7af841665eb0515f399ef06214abe7",
+    ".claude/agents/architect.md": "e884f538b73ccac89e74c6d8f4631c3fca3f1d1c45a4d6334a212b568ebef20a",
+    ".claude/agents/code-reviewer.md": "b4c904602e40f672e7461bf511413b97585a4e0454d66cf1bd1c1f59442ec4a8",
+    ".claude/agents/debugger.md": "2fbaaf2106d3a06ad633456cb2591f5f8e2d7483548cd07cc26460090c7cb349",
+    ".claude/agents/devops.md": "5cc1f0a49bacbae2da1e78550876611b202752cef29bf493fb187709e3734dc6",
+    ".claude/agents/doc-writer.md": "52ef018618b1992e78ac1a294e039e55b92dcfd591cf3519c2bb380018eef830",
+    ".claude/agents/lint-runner.md": "40a1ec81e71419063e07df8010be8fb8c62bc9580aa0117fcb28e59e9d9df7a1",
+    ".claude/agents/panel-expert.md": "0f19ae7d0ac52ca63407ce4ebd2e431d34c7a63a746cf7df88cf1b0b111d45aa",
+    ".claude/agents/security-reviewer.md": "f1feb30d8194683a5a4da4905fd509759b82b0dd856e68c0ed785072ec154d82",
+    ".claude/agents/setup-expert.md": "77352ba1f9267200089de0373184205fdc5778b822b24ab60e2c6f7e2013307a",
+    ".claude/agents/test-expert.md": "f885d1107ecdfe22d85dfbf1e0425f45bfc8fcdc60ecd2c819f582519bf66e5f",
+    ".claude/hooks/guard-bash.mjs": "7770709578faaf005afb1075b2d8e2e18af65a0daa0e581e44fbc1dd2d62dc49",
+    ".claude/hooks/guard-git.mjs": "41037af44c53848dcb66bf19181d3ecc4fdcbd5c910aec56351dead517eb3805",
+    ".claude/hooks/guard-ownership.mjs": "6ea1a6ff39d92febab5cc2899ff422541e9c521600080ed9be8e0132b62d8fa0",
+    ".claude/hooks/lib.mjs": "23ae2f7a44bd78e2dae94a87adc8cd84de118037910dbd6ec194fd989f485212",
+    ".claude/hooks/post-edit.mjs": "1618936080ec0ee6e0fe5d4b8d78f1713ad2b278b683afeb9f86396995498a28",
+    ".claude/hooks/session-start.mjs": "fc3fc7126166f56d48db2d60a19ac9134b2610d17157a12bb03bce5120584d03",
+    ".claude/hooks/stop-check.mjs": "aa4c45b13b35ae5188fbaf9943b0ac228b5a073a373098dede35e09eebe82c17",
+    ".claude/review-learnings.md": "13a10b4460612e8be6fed455f6e598301862dd88c4d63e3bad25d7b8c638298e",
+    ".claude/rules/docs-release.md": "1bc16a4b20215517efee9bd96ce264f01ed775ceed83c0638631c6abb0cb1df9",
+    ".claude/rules/git-workflow.md": "129f473f0954944b5637cd97a475d42b0ff1f6ea4655d307ebb69df149e7b6f4",
+    ".claude/rules/panel.md": "9ad5edc3752243fa3aa89204b5f8b3afbf2ddb778f136291fd901f5cae2beaee",
+    ".claude/rules/setup-skill.md": "02e1053524044dbec4dade71886bc56b35e1e7acaf79a9cb2ff41a1eb973e0f4",
+    ".claude/rules/tests.md": "764d5befd1b3dbd7de70ad2a94655037048868955484a65a6ef9df8e15380bc1",
+    ".claude/settings.json": "c0b285f81b6f9000137de1a0242c7f14c3c2037c140b8e2500d1e24f547498f6",
+    ".claude/skills/deliver/SKILL.md": "20636ce76bb1c0426b6ef58fd91ac1082d2c4c7e59b8ffb8178e5bc70f997a61",
+    ".claude/skills/faq/SKILL.md": "9a9623874ae0a27e0f289209947d52807559b2f31487d106c801dd561fca2438",
+    ".claude/skills/feat/SKILL.md": "34b19d343f557841d12e96e2c81f5e18e2cd058ff3435d0e21724b6ed5be1120",
+    ".claude/skills/fix/SKILL.md": "47bab236179c16ecc41e885938e145c2032b4d9cfe7ffaa4dc38fd57ba15e537",
+    ".claude/skills/investigate/SKILL.md": "b21f30812b1cd0b10575ecaea71483e7b797af43c2ea440ad7c17caa93f23f06",
+    ".claude/skills/pr-comments/SKILL.md": "29d8d101ac4d37492fb6cb59ab917217a4f76d50636a9f862fa2a9949864bb42",
+    ".claude/skills/review-pr/SKILL.md": "d5a6490d24814fa1a919d729f4cf6b12e31f91be19a4d89d84db900fdde15f24"
+  }
+}

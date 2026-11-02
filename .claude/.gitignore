@@ -1,0 +1,6 @@
+flows/
+agent-memory/
+agent-memory-local/
+worktrees/
+settings.local.json
+*.local.md
