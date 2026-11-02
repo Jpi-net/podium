@@ -106,8 +106,11 @@ class EffectsFixture {
     return count === 0 ? 0 : sum / count
   }
 
+  private static blankHd: string | undefined
+
   static highestInk(draw: (canvas: Canvas) => void): number {
-    const blank = atob(EffectsFixture.render('hd', () => undefined))
+    EffectsFixture.blankHd ??= atob(EffectsFixture.render('hd', () => undefined))
+    const blank = EffectsFixture.blankHd
     const drawn = atob(EffectsFixture.render('hd', draw))
     const width = 84 * Canvas.HD_CELL_WIDTH
     for (let i = 0; i < drawn.length; i += 4) {
