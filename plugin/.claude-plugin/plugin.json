@@ -1,7 +1,7 @@
 {
   "name": "podium",
   "displayName": "Podium",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Conduct Claude Code like an orchestra: /podium builds and maintains your project's .claude/ (CLAUDE.md, path-scoped rules, model-tiered agents, role skills, guard hooks), and /podium-stage opens a live side panel of the flow, the verification, the reviews and the commands.",
   "author": {
     "name": "Julien Pierlot",

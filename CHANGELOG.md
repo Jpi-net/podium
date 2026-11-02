@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-02
+
+### Changed
+
+- The /podium shortcut's handler is written so the plugin directory can check that it never changes the command you typed.
+
 ## [0.2.0] - 2026-11-02
 
 ### Changed
@@ -71,7 +77,8 @@ All notable changes to this project are documented here. The format follows [Kee
 - `/maestro-stage`: live side panel with five views (flow, delivery, history, context, tools), driven by `.claude/maestro.json`.
 - Panel effects tied to verification, seasonal decor, 41 avatar accessories.
 
-[Unreleased]: https://github.com/Jpi-net/podium/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/Jpi-net/podium/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/Jpi-net/podium/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/Jpi-net/podium/compare/v0.1.3...v0.2.0
 [0.1.3]: https://github.com/Jpi-net/podium/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/Jpi-net/podium/compare/v0.1.1...v0.1.2
