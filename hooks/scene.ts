@@ -1,7 +1,7 @@
 import type { FlowAgent, FlowEvent, FlowMain, FlowStatus } from '../types'
 import { Canvas, type Encoded, type Point, type RenderMode, type Rgb } from './canvas'
 import { Effects, type Ambience, type ExitStatus, type Obstacle, type Sky } from './effects'
-import { Insurance, type Business } from './insurance'
+import { WeatherFx } from './weather'
 import { Robots, type OrchestratorReaction, type OrchestratorState, type RobotMood } from './robots'
 import { Theme } from './theme'
 
@@ -21,7 +21,6 @@ export type SceneInput = {
   mode: RenderMode
   ambience: Ambience
   positions: Map<string, Point>
-  business?: Business
 }
 
 export type LaneInput = SceneInput & { from: number; to: number }
@@ -221,7 +220,6 @@ export class Scene {
     const labels = Scene.labels(canvas, center, orchestratorScale, placed, state, input, ordinals)
     const obstacles = Scene.obstacles(canvas, center, orchestratorScale, placed, labels, input)
     Effects.background(canvas, input.frame, input.at, input.ambience, obstacles)
-    Scene.decor(canvas, input)
     Scene.orbits(canvas, center, placed, input.frame)
 
     for (const p of placed) Scene.shadow(canvas, center, p)
@@ -234,25 +232,20 @@ export class Scene {
     const active = new Map<string, Point>()
     for (const p of placed) if (p.exit === 0) active.set(p.agent.id, { x: p.x, y: p.y })
     const gaze = Scene.gaze(input.events, input.at, active)
-    const weather = Insurance.weather(input.events, input.at)
+    const weather = WeatherFx.weather(input.events, input.at)
     const isSheltered = weather.isRaining || weather.clearing >= 0
     const top = Robots.orchestratorTop(center.y, orchestratorScale)
     const half = Scene.orchestratorHalf(canvas)
-    if (weather.isRaining) Insurance.rain(canvas, center, half, input.frame, { left: center.x - 9, right: center.x + 13, top: top - 12 })
+    if (weather.isRaining) WeatherFx.rain(canvas, center, half, input.frame, { left: center.x - 9, right: center.x + 13, top: top - 12 })
     Robots.drawOrchestrator(canvas, center.x, center.y, orchestratorScale, input.frame, state, Scene.reaction(input.agents, input.at), gaze, isSheltered || Effects.hatHeight(input.ambience, 10) > 0)
     const hatWidth = Scene.orchestratorHatWidth(orchestratorScale)
     if (isSheltered) {
       const open = weather.isRaining ? 1 : 1 - Math.min(1, weather.clearing * 2.5)
-      if (open > 0) Insurance.umbrella(canvas, center.x, top, open, input.frame)
-      if (weather.clearing >= 0) Insurance.rainbow(canvas, center.x, top - 4, weather.clearing)
+      if (open > 0) WeatherFx.umbrella(canvas, center.x, top, open, input.frame)
+      if (weather.clearing >= 0) WeatherFx.rainbow(canvas, center.x, top - 4, weather.clearing)
     } else Effects.hat(canvas, center.x, top, hatWidth, input.ambience, input.frame, 0.5)
     const pulse = Scene.verifPulse(input.events, input.at)
     if (pulse) Scene.shockwave(canvas, center, half, pulse)
-    if (input.business) {
-      const paid = Insurance.paid(input.events, input.at)
-      if (paid >= 0) Insurance.stamp(canvas, center.x + half.x + 1, center.y - 2, 'PAID', Insurance.OK_STAMP, paid)
-      Insurance.piggy(canvas, center.x + half.x + 4, center.y + 6, Insurance.coins(input.events, input.at))
-    }
     if (state === 'asleep') {
       const half = (Scene.AVATAR_WIDTH * Robots.ORCHESTRATOR_SCALE * orchestratorScale) / 2
       Effects.sleeping(canvas, center.x + half * 0.45, top + 1, input.frame)
@@ -667,30 +660,9 @@ export class Scene {
       toolColor: label === '' ? undefined : Scene.TOOL_COLORS[Scene.toolKind(label)],
     })
     if (ordinal > 0 && p.exit === 0 && scale > 0.3) Scene.badge(canvas, x, y + (Robots.HEIGHT * scale) / 2 + 0.2, ordinal, color)
-    Scene.business(canvas, center, p, input, { x, y }, scale, finale)
   }
 
-  private static business(canvas: Canvas, center: Point, p: Placed, input: SceneInput, at: Point, scale: number, finale: number): void {
-    if (!input.business) return
-    const isSecurity = p.agent.type.split(':').pop() === 'security-reviewer'
-    if (p.status === 'failed' && (p.exit === 0 || finale >= 0)) Insurance.claimFx(canvas, at.x, at.y, scale, Insurance.claim(p.agent.id), input.frame)
-    if (isSecurity && p.status === 'running' && p.exit === 0) {
-      Insurance.shield(canvas, at.x, at.y, scale, input.frame)
-      Insurance.wall(canvas, at, center, (input.at - p.agent.startedAt) / Insurance.WALL_MS)
-    }
-    if (finale < 0) return
-    const above = at.y - (Robots.HEIGHT * scale) / 2 - 2
-    if (p.status === 'failed') Insurance.stamp(canvas, at.x, above, 'CLAIM', Insurance.KO_STAMP, finale)
-    else if (p.status === 'completed' && isSecurity && input.business?.secured.has(p.agent.id)) Insurance.shield404(canvas, at.x, above - 2, finale)
-    else if (p.status === 'completed') Insurance.stamp(canvas, at.x, above, 'CLOSED', Insurance.OK_STAMP, finale)
-  }
 
-  private static decor(canvas: Canvas, input: SceneInput): void {
-    const business = input.business
-    if (!business) return
-    const kind = Insurance.decor(business.branch, business.wi)
-    if (kind) Insurance.decorAt(canvas, kind, input.frame)
-  }
 
   private static shadow(canvas: Canvas, center: Point, p: Placed): void {
     let presence = 1
@@ -756,7 +728,7 @@ export class Scene {
       return
     } else Scene.energyCable(canvas, cable, input.at, activity, flash)
     const tint = Scene.packetColor(p.agent, latest, input.isLive)
-    Scene.packets(canvas, cable, input.at, activity, flash, tint, input.business !== undefined)
+    Scene.packets(canvas, cable, input.at, activity, flash, tint)
     if (latest && burst > 0) Scene.sparks(canvas, cable, latest, burst, input.at, tint)
     if (latest) Scene.returnPacket(canvas, cable, latest)
   }
@@ -855,16 +827,16 @@ export class Scene {
     }
   }
 
-  private static packets(canvas: Canvas, cable: Cable, at: number, activity: number, flash: number, tint: Rgb, isThemed: boolean): void {
+  private static packets(canvas: Canvas, cable: Cable, at: number, activity: number, flash: number, tint: Rgb): void {
     const count = flash > 0.2 ? 3 : 2
     const rate = (4 + 10 * activity + 12 * flash) / Math.max(8, cable.length)
     for (let k = 0; k < count; k++) {
       const u = (at / 1000) * rate + cable.seed + k / count
-      Scene.packet(canvas, cable, u - Math.floor(u), -0.035, tint, 1 + flash, isThemed)
+      Scene.packet(canvas, cable, u - Math.floor(u), -0.035, tint, 1 + flash)
     }
   }
 
-  private static packet(canvas: Canvas, cable: Cable, t: number, tail: number, c: Rgb, boost: number, isThemed: boolean): void {
+  private static packet(canvas: Canvas, cable: Cable, t: number, tail: number, c: Rgb, boost: number): void {
     for (let s = 4; s >= 1; s--) {
       const u = t + tail * s
       if (u < 0 || u > 1) continue
@@ -873,8 +845,7 @@ export class Scene {
     }
     const head = Scene.along(cable, t)
     canvas.glow(head.x, head.y, 1.6 * boost, c, 0.22 * Math.min(2, boost))
-    if (isThemed) Insurance.document(canvas, head.x, head.y, Canvas.mix(c, Theme.WHITE, 0.2), 1)
-    else canvas.fillCircle(head.x, head.y, 0.45, Canvas.mix(c, Theme.WHITE, 0.35))
+    canvas.fillCircle(head.x, head.y, 0.45, Canvas.mix(c, Theme.WHITE, 0.35))
   }
 
   private static sparks(canvas: Canvas, cable: Cable, latest: ToolHit, burst: number, at: number, tint: Rgb): void {

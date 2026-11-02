@@ -332,7 +332,7 @@ export class Rules {
     const image = Rules.snapshot.manifest.checks.integrationImage
     if (image && Project.matches(image.command, command)) {
       if (image.armFlag && context.isArm && !command.includes(image.armFlag)) {
-        hits.push({ level: 'warn', rule: 'docker', detail: `Apple Silicon: ${image.armFlag} missing` })
+        hits.push({ level: 'warn', rule: 'docker', detail: `arm64 host: ${image.armFlag} missing` })
       }
       if (context.schemaEditedAt > context.imageBuiltAt) {
         hits.push({ level: 'warn', rule: 'docker', detail: `schema changed since the last image: ${image.stale ?? 'rebuild it'}` })

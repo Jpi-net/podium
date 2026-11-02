@@ -248,7 +248,7 @@ export class Fixtures {
         "label": "Integration tests / Docker",
         "short": "Docker",
         "remedy": "image amd64",
-        "why": "Apple Silicon: integration tests require an up-to-date prebuilt amd64 image",
+        "why": "arm64 hosts: integration tests require an up-to-date prebuilt amd64 image",
         "fix": "rerun build-image.sh then dotnet test with Integration__Database__UsePrebuiltImage=true"
       }
     },
@@ -264,7 +264,7 @@ export class Fixtures {
       "workItem": "(?:^|/)(\\d{4,6})(?:-|$)",
       "counterpart": "-main"
     },
-    "theme": "insurance",
+    "theme": "",
     "generatedFiles": {},
     "hooks": {}
   }

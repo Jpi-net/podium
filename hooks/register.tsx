@@ -37,7 +37,7 @@ import type {
 } from '../types'
 import { Accessories } from './accessories'
 import { Canvas, type Encoded, type Point, type RenderMode, type Rgb } from './canvas'
-import { Insurance } from './insurance'
+import { WeatherFx } from './weather'
 import { Effects, type Ambience, type Celebration, type CelebrationKind, type Holiday, type TimeOfDay } from './effects'
 import { Project, type AgentDef, type CommandDef, type Manifest, type ProjectSnapshot, type RoleId } from './project'
 import { Robots } from './robots'
@@ -204,7 +204,6 @@ class Runtime {
   static positions = new Map<string, Point>()
   static isDisco = false
   static celebrations: Celebration[] = []
-  static secured = new Set<string>()
   static toolMilestone = 0
   static stageKey = ''
   static stageInvalidatedAt = 0
@@ -942,7 +941,6 @@ class Flow {
     if (!agent || !Project.isReviewer(Runtime.project, agent.type) || answer.trim() === '') return
     const review: FlowReview = { agentId: id, type: agent.type, at: Flow.stamp(), ...Rules.review(answer) }
     await Runtime.io.reviews(list => [...list.filter(r => r.agentId !== id), review].slice(-12))
-    if (agent.type === 'security-reviewer' && review.verdict !== 'FAIL' && review.critical === 0 && review.major === 0) Runtime.secured.add(id)
     if (review.verdict === 'FAIL' || review.critical > 0) Flow.notify(`${agent.type}: ${review.verdict || 'review'} · ${View.plural(review.critical, 'critical issue')}`)
   }
 
@@ -1308,7 +1306,6 @@ class Flow {
       mode: Runtime.renderMode,
       ambience: Flow.ambience(now, at),
       positions: Runtime.positions,
-      business: Runtime.project.manifest.theme === 'insurance' ? { branch: Runtime.context?.branch ?? '', wi: Runtime.wi, secured: Runtime.secured } : undefined,
     }
     if (Runtime.mode === 'lanes') {
       const from = isLive ? Math.max(Flow.firstAt(), now - Flow.LIVE_WINDOW_MS) : Runtime.replayFrom
@@ -1345,7 +1342,7 @@ class Flow {
     if (Flow.isReplay()) return true
     if (Runtime.main.isBusy) return true
     if (Flow.isCelebrating(now)) return true
-    if (Insurance.isAnimated(Runtime.events, Flow.isReplay() ? Runtime.replayAt : now)) return true
+    if (WeatherFx.isAnimated(Runtime.events, Flow.isReplay() ? Runtime.replayAt : now)) return true
     if (Scene.hasReaction(Runtime.agents, Flow.isReplay() ? Runtime.replayAt : now)) return true
     if (Runtime.isDisco) return true
     if (Runtime.agents.some(a => a.status === 'running' || Scene.isOnStage(a, now))) return true
@@ -1503,7 +1500,6 @@ class Flow {
     Runtime.toolMilestone = 0
     Runtime.combo = 0
     Runtime.celebrations = []
-    Runtime.secured.clear()
     Runtime.lastCelebratedKey = ''
     Runtime.editedFiles.clear()
     Runtime.graphCache = undefined
