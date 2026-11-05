@@ -35,13 +35,14 @@ export class Cases {
   private static readonly DATE = /^\d{4}-\d{2}-\d{2}$/
   private static readonly VERB = /(^|[^a-z0-9])((?:skip|disabl|bypass|remov|ignor|weaken|silenc|delet|drop|omit|circumvent|avoid running|turn\w* (?:\S+ ){0,3}off|comment\w* out|desactiv|deactivat|contourn|saut|supprim|overrid|stop\w* running|switch\w* off|mut(?:e|es|ed|ing)(?![a-z0-9]))\w*)/g
   private static readonly WITHOUT = /(^|[^a-z0-9])(without)(?![a-z0-9])/g
-  private static readonly POSITIVE = /(^|[^a-z0-9])(run(?:s|ning)?|writ(?:e|es|ing)|add(?:s|ing)?|requir(?:e|es|ing)|wait(?:s|ing)? for|execut(?:e|es|ing))(?![a-z0-9])/g
+  private static readonly POSITIVE = /(^|[^a-z0-9])(run(?:s|ning)?|writ(?:e|es|ing)|add(?:s|ing)?|requir(?:e|es|ing)|wait(?:s|ing)? for|execut(?:e|es|ing)|bother\w*)(?![a-z0-9])/g
   private static readonly TARGET = /(^|[^a-z0-9])((?:test|guard|hook|review|permission|check|lint|validation|security|pre-commit|coverage|typecheck|type check|verification|assert|eslint|pytest|vitest|mypy|husky|pipeline)\w*|(?:ci|specs?|qa|tsc|jest)(?![a-z0-9]))/g
   private static readonly SINGLE_NEGATORS: ReadonlySet<string> = new Set(['never', 'dont', "don't", 'doesnt', 'jamais', 'ne'])
   private static readonly VERB_NEGATORS: ReadonlySet<string> = new Set(['do not', 'does not', 'must not', 'should not', 'refuses to', 'refused to'])
-  private static readonly POSITIVE_NEGATORS: ReadonlySet<string> = new Set(['do not', 'does not', 'must not', 'should not', 'no longer'])
+  private static readonly POSITIVE_NEGATORS: ReadonlySet<string> = new Set(['never', 'not', 'no', 'dont', "don't", 'doesnt', 'hardly', 'seldom', 'rarely', 'wont', "won't", 'cant', "can't", 'cannot', 'shouldnt', "shouldn't", 'isnt', "isn't", 'nobody', 'neither', 'nor'])
   private static readonly DOUBLERS: ReadonlySet<string> = new Set(['never', 'not', 'dont', "don't", 'doesnt', 'jamais', 'ne', 'rarely', 'seldom', 'hardly', 'almost', 'sometimes', 'often'])
-  private static readonly SCRIPT = /(?!\p{Script=Latin})\p{L}/u
+  private static readonly SCRIPT = /(?![A-Za-z\u00DF\u00E6\u0153\u00F8\u1E9E\u00C6\u0152\u00D8])\p{L}/u
+  private static readonly MARKS = /\p{M}/gu
   private static readonly MAX_CASES = 40
   private static readonly MAX_EVIDENCE = 20
   private static readonly FLAGS: readonly RegExp[] = [
@@ -204,7 +205,7 @@ export class Cases {
     if (!isAnchored) return Cases.reject('concept')
     const evidence = Cases.evidence(raw.evidence)
     if (evidence === undefined) return Cases.reject('evidence')
-    if ([situation, choice, why, ...options].some((part) => Cases.SCRIPT.test(part))) return Cases.reject('script')
+    if ([situation, choice, why, ...options].some((part) => Cases.isForeign(part))) return Cases.reject('script')
     if ([situation, choice, why, ...options].some((part) => Cases.isUnsafe(part))) return Cases.reject('unsafe')
     if (Cases.breaksFloor([situation, choice, why, ...options].join('. '), Infinity)) return Cases.reject('unsafe')
     if ((kind === 'refusal' || kind === 'blind-spot') && Cases.hasTarget(choice)) return Cases.reject('unsafe')
@@ -277,7 +278,7 @@ export class Cases {
       if (targets.length === 0) return false
       const isNear = (word: Span) => targets.some((target) => Cases.gap(word, target) <= window)
       if (Cases.spans(flat, Cases.VERB).some((verb) => !Cases.isNegated(flat, verb[0], Cases.VERB_NEGATORS) && isNear(verb))) return true
-      if (Cases.spans(flat, Cases.POSITIVE).some((verb) => Cases.isNegated(flat, verb[0], Cases.POSITIVE_NEGATORS) && isNear(verb))) return true
+      if (Cases.spans(flat, Cases.POSITIVE).some((verb) => Cases.isNegatedPositive(flat, verb[0]) && isNear(verb))) return true
       return Cases.spans(flat, Cases.WITHOUT).some((word) => targets.some((target) => target[0] >= word[1] && target[0] - word[1] <= window))
     } catch {
       return false
@@ -378,6 +379,23 @@ export class Cases {
 
   private static hasTarget(text: string): boolean {
     return Cases.spans(Cases.flatten(text), Cases.TARGET).length > 0
+  }
+
+  private static isForeign(text: string): boolean {
+    return Cases.SCRIPT.test(text.slice(0, Cases.NORMALISED).normalize('NFKD').replace(Cases.MARKS, ''))
+  }
+
+  private static isNegatedPositive(text: string, start: number): boolean {
+    const prefix = text.slice(Math.max(0, start - Cases.TAIL), start)
+    const cut = Math.max(prefix.lastIndexOf('.'), prefix.lastIndexOf(';'), prefix.lastIndexOf('!'), prefix.lastIndexOf('?'))
+    const words = prefix.slice(cut + 1).split(/[^a-z0-9']+/).filter((word) => word !== '')
+    for (let i = 0; i < words.length; i += 1) {
+      const word = words[i] ?? ''
+      const at = word === 'longer' && words[i - 1] === 'no' ? i - 1 : i
+      if (at === i && !Cases.POSITIVE_NEGATORS.has(word) && !word.startsWith('refrain')) continue
+      if (at !== i || !Cases.DOUBLERS.has(words[at - 1] ?? '')) return true
+    }
+    return false
   }
 
   private static isNegated(text: string, start: number, doubles: ReadonlySet<string>): boolean {

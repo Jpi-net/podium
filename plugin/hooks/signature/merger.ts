@@ -3,11 +3,11 @@ import { CaseRanker } from './ranker'
 import { TagIndex } from './tag-index'
 import { Vocabulary, type VocabularyData } from './vocabulary'
 
-export type MergeContext = { nextId: number, today: string, project: string, projectId: string, stack: string, extractor: string, vocabularyRevision: number, isProjectBatch: boolean, allowedEvidence?: readonly string[] }
+export type MergeContext = { nextId: number, today: string, project: string, projectId: string, stack: string, extractor: string, vocabularyRevision: number, isProjectBatch: boolean, allowedEvidence: readonly string[] }
 
 type Folded = { text: string, words: Set<string>, negated: Set<string> }
 
-type State = { working: Map<number, Case>, fresh: Set<number>, seen: Map<number, Set<string>>, countered: Set<number>, folded: Map<number, Folded>, result: MergeResult }
+type State = { working: Map<number, Case>, fresh: Set<number>, seen: Map<number, Set<string>>, countered: Set<number>, credited: Set<string>, allowed: Set<string>, folded: Map<number, Folded>, result: MergeResult }
 
 export type MergeResult = { cases: Case[], nextId: number, added: number[], reinforced: number[], contradicted: number[], dropped: number }
 
@@ -46,7 +46,7 @@ export class CaseMerger {
 
   static merge(existing: readonly Case[], incoming: readonly ExtractedCase[], context: MergeContext, vocabulary: VocabularyData): MergeResult {
     const result: MergeResult = { cases: [], nextId: context.nextId, added: [], reinforced: [], contradicted: [], dropped: 0 }
-    const state: State = { working: new Map(), fresh: new Set(), seen: new Map(), countered: new Set(), folded: new Map(), result }
+    const state: State = { working: new Map(), fresh: new Set(), seen: new Map(), countered: new Set(), credited: new Set(), allowed: new Set(Array.isArray(context.allowedEvidence) ? context.allowedEvidence : []), folded: new Map(), result }
     for (const value of existing) state.working.set(value.id, CaseMerger.copy(value))
     for (const item of incoming) {
       try {
@@ -87,8 +87,8 @@ export class CaseMerger {
 
   private static absorb(state: State, raw: ExtractedCase, context: MergeContext, vocabulary: VocabularyData): void {
     const { working, fresh, result } = state
-    const allowed = Array.isArray(context.allowedEvidence) && context.allowedEvidence.length > 0 ? new Set(context.allowedEvidence) : undefined
-    const item = allowed ? { ...raw, evidence: raw.evidence.filter((id) => allowed.has(id)) } : raw
+    const { allowed, credited } = state
+    const item = { ...raw, evidence: raw.evidence.filter((id) => allowed.has(id) && !credited.has(id)) }
     if (item.evidence.length === 0) {
       result.dropped += 1
       return
@@ -126,6 +126,7 @@ export class CaseMerger {
     if (target) {
       CaseMerger.reinforce(state, target, item, context)
       if (!fresh.has(target.id) && !result.reinforced.includes(target.id)) result.reinforced.push(target.id)
+      for (const id of item.evidence) credited.add(id)
       return
     }
     const created = CaseMerger.create(item, context, vocabulary, result.nextId)
@@ -134,6 +135,7 @@ export class CaseMerger {
     state.seen.set(created.id, new Set(item.evidence))
     fresh.add(created.id)
     result.added.push(created.id)
+    for (const id of item.evidence) credited.add(id)
   }
 
   private static reinforce(state: State, target: Case, item: ExtractedCase, context: MergeContext): void {

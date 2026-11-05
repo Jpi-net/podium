@@ -43,7 +43,7 @@ Path-scoped rules in `.claude/rules/` load automatically when matching files are
 - The main thread orchestrates: plan (with the architect or the debugger when design or root cause matters) → experts in parallel on **disjoint file partitions** → verification by `lint-runner` → reviews in parallel → commits. Without a command, the same orchestration applies to any non-trivial request; trivial requests (one-line edit, question) are answered directly.
 - Model tiers: Opus agents think (architect, debugger, reviewers), Sonnet agents implement, Haiku agents run mechanical tasks.
 - Implementers: `panel-expert` (plugin/hooks/, plugin/types/), `setup-expert` (plugin/skills/setup/), `test-expert` (plugin/tests/), `doc-writer` (README, CHANGELOG, CONTRIBUTING, SECURITY, plugin/assets/), `devops` (.github/, .claude-plugin/, root config files).
-- Reviews: `code-reviewer` always; `security-reviewer` when the diff touches `plugin/skills/setup/templates/hooks/**`, `plugin/skills/setup/templates/settings.json.tmpl`, `$.process.run` / `$.fs` / `$.prompt` usage in `plugin/hooks/`, or permissions; `doc-writer` when behaviour, commands or manifest keys change.
+- Reviews: `code-reviewer` always; `security-reviewer` when the diff touches `plugin/skills/setup/templates/hooks/**`, `plugin/skills/setup/templates/settings.json.tmpl`, `$.process.run` / `$.fs` / `$.prompt` / `$.model` usage in `plugin/hooks/`, `plugin/hooks/signature/**`, `plugin/agents/**`, or permissions; `doc-writer` when behaviour, commands or manifest keys change.
 
 ## Commands cheat sheet
 

@@ -143,3 +143,25 @@ test('paths skips a token longer than five hundred and twelve characters', () =>
   // Assert
   expect(found).toEqual(['src/b.ts'])
 })
+
+test('tag reads at most twenty given paths', () => {
+  // Arrange
+  const paths = [...Array.from({ length: 20 }, (_, i) => `dir/file${i}.txt`), 'src/late.rs']
+
+  // Act
+  const tags = SituationTagger.tag(SignatureFixtures.vocabulary(), { text: '', paths, stack: [] })
+
+  // Assert
+  expect(tags).not.toContain('rust')
+})
+
+test('tag reads the twentieth given path', () => {
+  // Arrange
+  const paths = [...Array.from({ length: 19 }, (_, i) => `dir/file${i}.txt`), 'src/last.rs']
+
+  // Act
+  const tags = SituationTagger.tag(SignatureFixtures.vocabulary(), { text: '', paths, stack: [] })
+
+  // Assert
+  expect(tags).toContain('rust')
+})

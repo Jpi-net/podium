@@ -97,6 +97,7 @@ export class SignatureFixtures {
       extractor: 'test',
       vocabularyRevision: 1,
       isProjectBatch: false,
+      allowedEvidence: [],
       ...partial
     }
   }

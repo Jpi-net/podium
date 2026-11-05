@@ -25,6 +25,7 @@ export class Vocabulary {
   private static readonly MAX_PATH_INPUT = 200
   private static readonly MAX_OVERLAY_TAGS = 200
   private static readonly MAX_PATHS_PER_TAG = 8
+  private static readonly MAX_OVERLAY_PATHS = 200
   private static readonly META = '\\^$.*+?()[]{}|'
   private static readonly MAX_OPTIONALS = 2
   private static readonly MAX_GROUPS = 1
@@ -281,10 +282,12 @@ export class Vocabulary {
     const revision = typeof root.revision === 'number' && Number.isFinite(root.revision) && root.revision >= 0 ? Math.floor(root.revision) : 0
     const tags: Record<string, TagDef> = {}
     const source = Vocabulary.record(root.tags)
+    let room = Vocabulary.MAX_OVERLAY_PATHS
     if (source !== undefined) {
       for (const name of Object.keys(source)) {
-        const def = Vocabulary.def(name, source[name])
+        const def = Vocabulary.def(name, source[name], room)
         if (def === undefined) continue
+        room -= def.paths.length
         tags[name] = def
         if (Object.keys(tags).length >= Vocabulary.MAX_OVERLAY_TAGS) break
       }
@@ -417,7 +420,7 @@ export class Vocabulary {
     return value as Record<string, unknown>
   }
 
-  private static def(name: string, value: unknown): TagDef | undefined {
+  private static def(name: string, value: unknown, room: number): TagDef | undefined {
     if (!Vocabulary.isName(name)) return undefined
     const raw = Vocabulary.record(value)
     if (raw === undefined) return undefined
@@ -436,7 +439,9 @@ export class Vocabulary {
     }
     const paths: string[] = []
     if (Array.isArray(raw.paths)) {
+      const cap = Math.min(Vocabulary.MAX_PATHS_PER_TAG, room)
       for (const path of raw.paths) {
+        if (paths.length >= cap) break
         if (typeof path !== 'string' || path === '' || path.length > Vocabulary.MAX_PATH_LENGTH) continue
         if (!Vocabulary.isSafePath(path)) continue
         try {
@@ -445,7 +450,6 @@ export class Vocabulary {
           continue
         }
         paths.push(path)
-        if (paths.length >= Vocabulary.MAX_PATHS_PER_TAG) break
       }
     }
     return { facet: facet as Facet, parent, aliases, paths }

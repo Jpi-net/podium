@@ -42,6 +42,8 @@ import { Project, type AgentDef, type CommandDef, type Manifest, type ProjectSna
 import { Robots } from './robots'
 import { Rules, type RuleHit } from './rules'
 import { Scene, type GraphLabel, type GraphResult, type ToolKind } from './scene'
+import { Signature, type SignaturePorts } from './signature/signature'
+import { SignatureView, type SignatureActions } from './signature/view'
 import { Theme } from './theme'
 
 type Ui = Elements['terminal']
@@ -154,6 +156,7 @@ const contextAtom = atom(
   },
   { shape: 'context-4' },
 )
+const signatureAtom = atom({ plugin: 'podium', key: 'signature' } as const, Signature.empty(), { shape: 'signature-1' })
 const viewAtom = atom(
   { plugin: 'podium', key: 'view' } as const,
   { tab: 'flux', mode: 'journal', filter: 'essential', isWhyShown: false, isReplaying: false, replaySpeed: 8, isClosed: false },
@@ -229,6 +232,10 @@ class Runtime {
   static lastNotifyAt = 0
   static combo = 0
   static comboAt = 0
+  static introAt = 0
+  static notNowAt = 0
+  static signatureStart: Promise<void> | undefined
+  static signatureGeneration = 0
 
   static io(): Io {
     if (!Runtime.ports) throw new Error('podium: engine ports are not ready')
@@ -279,6 +286,7 @@ class Flow {
     { id: 'historique', label: 'History', short: 'Hist.', hotkey: '3' },
     { id: 'contexte', label: 'Context', short: 'Ctx', hotkey: '4' },
     { id: 'commandes', label: 'Tools', short: 'Tools', hotkey: '5' },
+    { id: 'signature', label: 'Signature', short: 'Sign.', hotkey: '6' },
   ]
   static readonly ALIASES: Record<string, { tab: FlowTab; mode?: HistoryMode }> = {
     flow: { tab: 'flux' },
@@ -291,8 +299,11 @@ class Flow {
     context: { tab: 'contexte' },
     commands: { tab: 'commandes' },
     tools: { tab: 'commandes' },
+    signature: { tab: 'signature' },
+    profile: { tab: 'signature' },
   }
   static readonly FILTERS = ['essential', 'errors', 'all']
+  static readonly SIGNATURE_CONSENT = ['on', 'off', 'pause', 'resume', 'exclude', 'include', 'erase']
   static readonly SKILL = 'podium:setup'
   static readonly RUN_FALLBACK_MS = 30 * 60_000
 
@@ -1522,7 +1533,91 @@ class Flow {
     } catch {
       Runtime.isPlaced = false
     }
+    if (Runtime.isPlaced) await Flow.introduce()
     return Runtime.isPlaced
+  }
+
+  static async introduce(): Promise<void> {
+    try {
+      const now = Date.now()
+      if (!Signature.shouldIntroduce(now)) return
+      Runtime.introAt = now
+      Signature.remember(Runtime.introAt, Runtime.notNowAt)
+      await Runtime.io().storeSet('signature.introAt', now)
+      if (Runtime.isPlaced) await Flow.setView(v => ({ ...v, tab: 'signature' }))
+      else Runtime.io().toast('Podium can learn how you work. Open /podium-stage signature to choose.', { timeoutMs: 8000 })
+    } catch {
+      return
+    }
+  }
+
+  static signatureActions(): SignatureActions {
+    const say = (task: Promise<string>): void =>
+      void task
+        .then(text => Runtime.io().toast(text, { timeoutMs: 6000 }))
+        .catch(() => undefined)
+        .then(() => Runtime.io().invalidate())
+    return {
+      toggle: key => Signature.toggle(key),
+      enable: () => say(Signature.enable()),
+      notNow: () => {
+        Runtime.notNowAt = Date.now()
+        Signature.remember(Runtime.introAt, Runtime.notNowAt)
+        void Runtime.io().storeSet('signature.notNowAt', Runtime.notNowAt).catch(() => undefined)
+        say(Signature.notNow())
+      },
+      never: () => say(Signature.never()),
+      pause: () => say(Signature.pause()),
+      resume: () => say(Signature.resume()),
+      erase: () => say(Signature.erase()),
+    }
+  }
+
+  static sign(task: () => void): void {
+    try {
+      task()
+    } catch {
+      return
+    }
+  }
+
+  static signPrompt(e: unknown, result: unknown): void {
+    try {
+      const outcome = result as Loose | undefined
+      if (outcome === undefined || outcome === null || outcome['drop'] !== undefined) return
+      const origin = (e as Loose)['origin'] as Loose | undefined
+      const command = (e as Loose)['command'] as Loose | undefined
+      Signature.onPrompt({
+        text: Flow.field(e, 'text'),
+        command: typeof command?.['name'] === 'string' ? command['name'] : '',
+        args: typeof command?.['args'] === 'string' ? command['args'] : '',
+        isUserOrigin: origin?.['kind'] === 'composer' || origin?.['kind'] === 'bridge',
+        isMeta: (e as Loose)['isMeta'] === true,
+        isNotification: Flow.isTaskNotification(e),
+      })
+    } catch {
+      return
+    }
+  }
+
+  static signToolCall(e: unknown, ran: unknown): void {
+    try {
+      const tool = Flow.field(e, 'tool')
+      if (tool !== 'AskUserQuestion' && tool !== 'ExitPlanMode') return
+      const outcome = ran as Loose
+      const result = (typeof outcome['result'] === 'object' && outcome['result'] !== null ? outcome['result'] : {}) as Loose
+      if (tool === 'AskUserQuestion') {
+        if (outcome['result'] === undefined) return
+        Signature.onQuestion({ questions: result['questions'], answers: result['answers'], response: result['response'], afkTimeoutMs: result['afkTimeoutMs'] })
+        return
+      }
+      const isRefused = outcome['deny'] !== undefined || outcome['isError'] === true
+      const reason = outcome['isError'] === true && typeof outcome['text'] === 'string' ? outcome['text'] : ''
+      const plan = (e as Loose)['plan'] ?? result['plan']
+      Signature.onPlan({ plan, isRefused, feedback: reason, isEdited: result['planWasEdited'] === true })
+    } catch {
+      return
+    }
   }
 
   static async ensurePane(): Promise<void> {
@@ -1812,15 +1907,15 @@ class View {
   static footerText(data: Snapshot): string {
     switch (data.view.tab) {
       case 'livraison':
-        return data.alerts.length > 0 ? '1-5 tabs · h why · x clears the violations' : '1-5 tabs · Tab browses · Enter opens an agent'
+        return data.alerts.length > 0 ? '1-6 tabs · h why · x clears the violations' : '1-6 tabs · Tab browses · Enter opens an agent'
       case 'historique':
-        return data.view.mode === 'couloirs' ? '1-5 tabs · c journal · p replay · v speed · l live' : '1-5 tabs · f filter · c lanes'
+        return data.view.mode === 'couloirs' ? '1-6 tabs · c journal · p replay · v speed · l live' : '1-6 tabs · f filter · c lanes'
       case 'contexte':
-        return '1-5 tabs · r refreshes the context'
+        return '1-6 tabs · r refreshes the context'
       case 'commandes':
-        return '1-5 tabs · Tab browses · Enter prepares the command'
+        return '1-6 tabs · Tab browses · Enter prepares the command'
       default:
-        return '1-5 tabs · Tab browses · Enter opens an agent'
+        return '1-6 tabs · Tab browses · Enter opens an agent'
     }
   }
 
@@ -2938,6 +3033,7 @@ type Snapshot = {
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     Runtime.cwd = e.cwd
+    const generation = ++Runtime.signatureGeneration
     for (const t of Runtime.timers) t.cancel()
     Runtime.timers = []
     Runtime.ticker?.cancel()
@@ -2951,8 +3047,8 @@ export const register: Register = on => {
     Runtime.isWanted = false
     await $.command.register({
       name: 'podium-stage',
-      description: 'Live side panel of the agents (tabs: flow, delivery, history, context, tools; reset to clear)',
-      argumentHint: '[flow|delivery|history|context|tools|recap|accessory [name|list]|notify on|notify off|reset|disco|quad|half|auto|fps <10-60>]',
+      description: 'Live side panel of the agents (tabs: flow, delivery, history, context, tools, signature; reset to clear)',
+      argumentHint: '[flow|delivery|history|context|tools|signature [on|off|pause|resume|exclude <folder>|include <folder>|erase]|recap|accessory [name|list]|notify on|notify off|reset|disco|quad|half|auto|fps <10-60>]',
     })
     await $.command.register({
       name: 'podium',
@@ -3064,6 +3160,48 @@ export const register: Register = on => {
     } catch {
       Runtime.timers = []
     }
+    Runtime.signatureStart = (async () => {
+      const env = new Map<string, string>()
+      env.set('HOME', (await $.env.get('HOME').catch(() => undefined)) ?? '')
+      env.set('USERPROFILE', (await $.env.get('USERPROFILE').catch(() => undefined)) ?? '')
+      env.set('CLAUDE_CONFIG_DIR', (await $.env.get('CLAUDE_CONFIG_DIR').catch(() => undefined)) ?? '')
+      const introAt = await $.store.get('signature.introAt').catch(() => undefined)
+      const notNowAt = await $.store.get('signature.notNowAt').catch(() => undefined)
+      Runtime.introAt = typeof introAt === 'number' ? introAt : 0
+      Runtime.notNowAt = typeof notNowAt === 'number' ? notNowAt : 0
+      Signature.remember(Runtime.introAt, Runtime.notNowAt)
+      const session = await $.session.id().catch(() => '')
+      const ports: SignaturePorts = {
+        fs: {
+          read: path => $.fs.read(path),
+          write: async (path, text) => {
+            await $.fs.write(path, text)
+          },
+          exists: path => $.fs.exists(path),
+          list: path => $.fs.list(path),
+          stat: async path => {
+            try {
+              const info = await $.fs.stat(path, { resolve: true })
+              return { kind: info.kind, isLink: info.isLink, realPath: info.realPath ?? '' }
+            } catch {
+              return undefined
+            }
+          },
+        },
+        git: async (argv, cwd) => {
+          const r = await $.process.run([...argv], { cwd, timeoutMs: 10_000 })
+          return { exitCode: r.exitCode, stdout: r.stdout }
+        },
+        now: () => Date.now(),
+        env: name => env.get(name) ?? '',
+        toast: text => void $.ui.toast(text),
+        changed: state => void update($, signatureAtom, () => state).catch(() => undefined),
+      }
+      if (generation !== Runtime.signatureGeneration) return
+      Runtime.timers.push($.clock.every(60_000, () => void Signature.flush().catch(() => undefined)))
+      await Signature.start(ports, { cwd: e.cwd, session, isInteractive: e.isInteractive })
+      if (generation === Runtime.signatureGeneration) await Flow.introduce()
+    })().catch(() => undefined)
     if (!Runtime.view.isClosed && Flow.mayAutoOpen()) void Flow.placePane()
     return next(e)
   })
@@ -3133,6 +3271,26 @@ export const register: Register = on => {
       Runtime.io().invalidate()
       return { text: `Podium: disco mode ${Runtime.isDisco ? 'on' : 'off'}.` }
     }
+    if (arg.startsWith('signature ')) {
+      const word = arg.split(/\s+/)[1] ?? ''
+      const isOwn = e.origin?.kind === 'composer' || e.origin?.kind === 'bridge'
+      if (Flow.SIGNATURE_CONSENT.includes(word) && !isOwn) return { text: 'Run this command yourself.' }
+      const started = Runtime.signatureStart
+      if (started !== undefined) {
+        await Promise.race([
+          started,
+          new Promise<void>(resolve => {
+            try {
+              $.clock.after(3000, () => resolve())
+            } catch {
+              resolve()
+            }
+          }),
+        ])
+      }
+      const text = await Signature.command(e.args.trim().slice('signature'.length))
+      if (text !== '') return { text }
+    }
     const alias = Flow.ALIASES[arg]
     const tab = alias === undefined ? undefined : Flow.TABS.find(t => t.id === alias.tab)
     if (alias !== undefined) await Flow.setView(v => ({ ...v, tab: alias.tab, mode: alias.mode ?? v.mode }))
@@ -3149,6 +3307,7 @@ export const register: Register = on => {
     if (e.tool === 'Bash' && Flow.isTreeCommand(pending)) pending.gitBefore = await Flow.treeState()
     void Flow.enqueue(() => Flow.before(e, pending))
     const ran = await next(e)
+    Flow.signToolCall(e, ran)
     await Flow.enqueue(() => Flow.after(e, ran, pending))
     if (/(^|[\\/])\.claude[\\/]/.test(pending.path)) void Flow.loadProject()
     return ran
@@ -3156,6 +3315,10 @@ export const register: Register = on => {
 
   on('agent.spawn', async ($, e, next) => {
     const r = await next(e)
+    if (!r.deny) {
+      const model = r.model ?? ''
+      Flow.sign(() => Signature.onAgent(e.subagentType, model))
+    }
     if (!r.deny && r.agentId) {
       const agentId = r.agentId
       await Flow.enqueue(() => Flow.spawned(agentId, e.subagentType, e.description, r.model, e.parentAgentId ?? ''))
@@ -3165,11 +3328,35 @@ export const register: Register = on => {
 
   on('turn.complete', async ($, e, next) => {
     const r = await next(e)
+    Flow.sign(() => Signature.onTurn(e.reason, e.agentId ?? '', e.turnId))
     await Flow.enqueue(() => Flow.completed(e))
     return r
   })
 
+  on('session.end', async ($, e, next) => {
+    await Signature.end().catch(() => undefined)
+    const r = await next(e)
+    if (e.reason === 'clear') {
+      await Promise.race([
+        $.session.id().then(id => Signature.renew(id)),
+        new Promise<void>(resolve => {
+          try {
+            $.clock.after(2000, () => resolve())
+          } catch {
+            resolve()
+          }
+        }),
+      ]).catch(() => undefined)
+    }
+    return r
+  })
+
   on('prompt.submit', async ($, e, next) => {
+    const proceed = async () => {
+      const r = await next(e)
+      Flow.signPrompt(e, r)
+      return r
+    }
     if (!Runtime.isPlaced && !Runtime.view.isClosed && Flow.mayAutoOpen() && e.isMeta !== true && !Flow.isTaskNotification(e)) {
       try {
         const opened = await $.ui.open({ id: PANE, title: 'Podium', backgroundColor: Theme.BACKDROP, columns: 84 })
@@ -3181,7 +3368,7 @@ export const register: Register = on => {
     if (Flow.isTaskNotification(e)) {
       const text = e.text
       void Flow.enqueue(() => Flow.resolveBackground(text))
-      return next(e)
+      return proceed()
     }
     if (e.command === undefined) {
       Flow.touch()
@@ -3192,7 +3379,7 @@ export const register: Register = on => {
         void Flow.pushEvent('', 'prompt', 'New prompt', false)
       })
     }
-    return next(e)
+    return proceed()
   })
 
   on('session.attach', async ($, e, next) => {
@@ -3256,8 +3443,11 @@ export const register: Register = on => {
     const resolved = Flow.tabOf(data.view.tab)
     const view: FlowView = { ...data.view, tab: resolved.tab, mode: resolved.mode ?? data.view.mode }
     const shown: Snapshot = { ...data, view }
+    const signature = view.tab === 'signature' ? await read($, signatureAtom) : Signature.empty()
     const body =
-      view.tab === 'historique'
+      view.tab === 'signature'
+        ? SignatureView.render(ui, width, signature, Flow.signatureActions())
+        : view.tab === 'historique'
         ? View.historique(ui, width, viewportRows, shown)
         : view.tab === 'livraison'
           ? View.livraison(ui, width, shown)

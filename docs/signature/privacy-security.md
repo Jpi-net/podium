@@ -31,6 +31,8 @@ Signature still sends nothing to any server other than the model calls of the us
 | Prompt injection through the context block into the live session | context comes only from the developer's own cases, after validation and the same safety filter; the block says project instructions win |
 | Path traversal through `/podium-stage learn <path>` or `export <file>` | the learn path must resolve (`$.fs.stat` with `resolve`) to a git working tree; export writes only to a path the developer typed, refusing paths inside `<config>/` other than `<config>/podium/exports/` |
 | Git argument injection | argv arrays only; shas validated `^[0-9a-f]{7,40}$`; identities validated as emails before `--author=`; paths passed after `--` |
+| A symbolic link planted inside `~/.claude/podium/` makes writes land elsewhere (`$.fs.write` follows links) | the real path of the root is resolved at start; every write checks its parent's real path is inside it and that the target is not a link |
+| Another plugin or the model runs `/podium-stage signature on` or `erase` | state-changing subcommands run only when the person typed them (command origin) |
 | Runaway cost | per-run and per-day token caps, run count cap, backoff, visible counter |
 | Data growth | budgets in `data-model.md` |
 | Lock starvation or corruption | lock TTL; corrupt files quarantined and rebuilt |
@@ -62,7 +64,7 @@ Signature still sends nothing to any server other than the model calls of the us
 
 ## Security review checklist for every Signature pull request
 
-1. No `$.fs.write` outside `SignatureStore`; every written path starts with the resolved root.
+1. No `$.fs.write` outside `SignatureStore`; every written path is inside the resolved root by spelling and by real path, and never writes through a link.
 2. No `$.process.run` with a non-literal executable or a non-git command; every variable argument validated.
 3. Every text field that reaches the journal or a model call went through `Redactor`.
 4. Every hook path catches and continues with `next(e)`.
