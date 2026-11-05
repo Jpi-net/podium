@@ -7,9 +7,12 @@ All notable changes to this project are documented here. The format follows [Kee
 ### Added
 
 - Signature, an opt-in profile of how you work (off by default): an opt-in screen and a Signature tab (key 6) in /podium-stage, with a choice per capability. It introduces itself at most once a day until you choose; Not now waits 7 days.
-- Once enabled, Podium records your masked prompts, answers to Claude's questions, accepted or refused plans, interruptions and the subagents used from your sessions into ~/.claude/podium/journal/ on your machine. File contents, tool outputs and secrets are never recorded, and sessions run without a conversation (`claude -p`) are skipped.
+- Once enabled, Podium records your masked prompts, answers to Claude's questions, accepted or refused plans, interruptions, the subagents used and, only when your next prompt corrects it or follows an interruption, Claude's last reply (masked, 600 characters) from your sessions into ~/.claude/podium/journal/ on your machine. File contents, tool outputs and secrets are never recorded, and sessions run without a conversation (`claude -p`) are skipped.
 - Keep a folder out with a .podium-private file (searched up to the git root) or `/podium-stage signature exclude <folder>` (absolute or `~` path).
 - `/podium-stage signature [on|off|pause|resume|exclude|include|erase]` to control it; `erase` empties everything stored.
+- Signature learning: Podium summarises what it recorded, and commits authored with your email address, into a profile of traits by lens (security, architecture, robustness, testing, git, developer experience, product), in the background when idle or on request. The requests go through your own Claude Code session and plan, masked, capped at 2 runs and 300,000 tokens a day by default.
+- The Signature tab shows the learning status, counts, lenses and a list of new traits to review with Keep and Not me, plus Learn now and Learn from another repository.
+- `/podium-stage signature learn-now`, `rebuild` and `forget <trait id or #case>`, and `/podium-stage learn <path>` to learn from another local repository. These only run when you type them.
 - PRIVACY.md and the README describe what Signature records, where, and how to stop it.
 
 ## [0.2.3] - 2026-11-02

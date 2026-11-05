@@ -1,6 +1,6 @@
 import { Redactor } from './redactor'
 
-export type SignalKind = 'prompt' | 'question' | 'plan' | 'abort' | 'agent' | 'use'
+export type SignalKind = 'prompt' | 'question' | 'plan' | 'abort' | 'agent' | 'use' | 'turn'
 
 export type SignalContext = { session: string, project: string, projectId: string, stack: readonly string[], home: string, at: number }
 
@@ -22,6 +22,12 @@ export class SignalExtractor {
   private static readonly PLAN = 1500
   private static readonly FEEDBACK = 600
   private static readonly SHORT = 64
+  private static readonly TURN = 600
+  private static readonly REJECTIONS: readonly string[] = [
+    'The agent proposed a plan that was rejected by the user.',
+    "The user doesn't want to proceed with this tool use."
+  ]
+  private static readonly SAID = 'the user said:'
   private static readonly ID = 128
   private static readonly MAX_QUESTIONS = 8
   private static readonly MAX_OPTIONS = 12
@@ -154,6 +160,22 @@ export class SignalExtractor {
       ? caseIds.filter((id) => typeof id === 'number' && Number.isInteger(id) && id >= 0).slice(0, SignalExtractor.MAX_CASES)
       : []
     return SignalExtractor.signal(context, 'use', { caseIds: ids })
+  }
+
+  static turn(context: SignalContext, text: string): Signal {
+    return SignalExtractor.signal(context, 'turn', { text: Redactor.clean(SignalExtractor.str(text), SignalExtractor.TURN, context.home) })
+  }
+
+  static isRejection(text: string): boolean {
+    if (typeof text !== 'string') return false
+    const head = text.trimStart()
+    return SignalExtractor.REJECTIONS.some((prefix) => head.startsWith(prefix))
+  }
+
+  static rejectionFeedback(text: string): string {
+    if (!SignalExtractor.isRejection(text)) return ''
+    const at = text.indexOf(SignalExtractor.SAID)
+    return at < 0 ? '' : text.slice(at + SignalExtractor.SAID.length).trim()
   }
 
   static normalizeRemote(url: string): string {

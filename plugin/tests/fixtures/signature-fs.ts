@@ -1,5 +1,8 @@
+import { Cases, type Case } from '../../hooks/signature/cases'
 import { Journal } from '../../hooks/signature/journal'
 import { SignaturePaths, type SignatureFiles } from '../../hooks/signature/paths'
+import type { GitPort } from '../../hooks/signature/signature'
+import type { ModelAnswer, ModelPort, ModelRequest } from '../../hooks/signature/learner'
 import type { SignalContext, Signal, SignalKind } from '../../hooks/signature/signals'
 import type { FsEntryLike, FsPort, FsStat } from '../../hooks/signature/store'
 
@@ -13,6 +16,8 @@ export class MemoryFs implements FsPort {
   private readonly brokenReads = new Set<string>()
   private readonly brokenWrites = new Set<string>()
   private clock = 1000
+  private refusing: Set<string> | undefined
+  private writeHook: ((path: string) => void) | undefined
 
   seed(path: string, text: string): MemoryFs {
     this.clock += 1
@@ -25,6 +30,17 @@ export class MemoryFs implements FsPort {
     return this
   }
 
+  touch(path: string, mtimeMs: number): MemoryFs {
+    const file = this.files.get(path)
+    if (file !== undefined) file.mtimeMs = mtimeMs
+    return this
+  }
+
+  onWrite(hook: (path: string) => void): MemoryFs {
+    this.writeHook = hook
+    return this
+  }
+
   link(path: string, size: number): MemoryFs {
     this.links.set(path, size)
     return this
@@ -32,6 +48,11 @@ export class MemoryFs implements FsPort {
 
   failRead(path: string): MemoryFs {
     this.brokenReads.add(path)
+    return this
+  }
+
+  refuseWritesExcept(...allowed: string[]): MemoryFs {
+    this.refusing = new Set(allowed)
     return this
   }
 
@@ -55,9 +76,10 @@ export class MemoryFs implements FsPort {
   async write(path: string, text: string): Promise<void> {
     this.calls.push('write ' + path)
     this.writes.push(path)
-    if (this.brokenWrites.has(path)) throw new Error('write failed')
+    if (this.brokenWrites.has(path) || (this.refusing !== undefined && !this.refusing.has(path))) throw new Error('write failed')
     this.clock += 1
     this.files.set(path, { text, mtimeMs: this.clock })
+    this.writeHook?.(path)
   }
 
   async exists(path: string): Promise<boolean> {
@@ -142,6 +164,10 @@ export class SignatureStoreFixture {
     return new MemoryFs().mkdir(SignatureStoreFixture.ROOT)
   }
 
+  static line(value: Case): string {
+    return Cases.toLine(value) + '\n'
+  }
+
   static badRoots(): string[] {
     return ['', 'relative/podium', '/']
   }
@@ -156,5 +182,224 @@ export class SignatureStoreFixture {
       .seed(files.cases + '/001.jsonl', '')
       .seed(files.journal + '/2026-11/s1.jsonl', 'éé')
       .seed(files.journal + '/2026-10/s0.jsonl', 'line\n')
+  }
+}
+
+export type GitResult = { exitCode: number, stdout: string }
+
+export class ScriptedGit {
+  readonly calls: string[][] = []
+  readonly cwds: string[] = []
+  readonly port: GitPort = (argv, cwd) => this.answer(argv, cwd)
+  private pages: string[] = []
+  private page = 0
+  private readonly diffs = new Map<string, string>()
+  private emailText = ''
+  private headSha = ''
+  private toplevel = ''
+  private readonly failing = new Set<string>()
+  private isCrashing = false
+  private readonly failingOnce = new Set<string>()
+
+  log(pages: string[]): ScriptedGit {
+    this.pages = pages
+    this.page = 0
+    return this
+  }
+
+  show(sha: string, diff: string): ScriptedGit {
+    this.diffs.set(sha, diff)
+    return this
+  }
+
+  email(text: string): ScriptedGit {
+    this.emailText = text
+    return this
+  }
+
+  head(sha: string): ScriptedGit {
+    this.headSha = sha
+    return this
+  }
+
+  top(path: string): ScriptedGit {
+    this.toplevel = path
+    return this
+  }
+
+  crash(): ScriptedGit {
+    this.isCrashing = true
+    return this
+  }
+
+  failOnce(subcommand: string): ScriptedGit {
+    this.failingOnce.add(subcommand)
+    return this
+  }
+
+  fail(subcommand: string): ScriptedGit {
+    this.failing.add(subcommand)
+    return this
+  }
+
+  subcommands(): string[] {
+    return this.calls.map((argv) => ScriptedGit.parse(argv).sub)
+  }
+
+  private async answer(argv: readonly string[], cwd: string): Promise<GitResult> {
+    this.calls.push([...argv])
+    if (this.isCrashing) throw new Error('git crashed')
+    const parsed = ScriptedGit.parse(argv)
+    this.cwds.push(parsed.root ?? cwd)
+    const sub = parsed.sub
+    if (this.failingOnce.delete(sub)) return { exitCode: 1, stdout: '' }
+    if (this.failing.has(sub)) return { exitCode: 1, stdout: '' }
+    if (sub === 'log') {
+      const stdout = this.pages[this.page] ?? ''
+      this.page += 1
+      return { exitCode: 0, stdout }
+    }
+    if (sub === 'show') {
+      const sha = argv.find((item) => /^[0-9a-f]{7,40}$/.test(item)) ?? ''
+      return { exitCode: 0, stdout: this.diffs.get(sha) ?? '' }
+    }
+    if (sub === 'config') {
+      return this.emailText === '' ? { exitCode: 1, stdout: '' } : { exitCode: 0, stdout: this.emailText + '\n' }
+    }
+    if (sub === 'rev-parse') {
+      const value = argv.includes('--show-toplevel') ? this.toplevel : this.headSha
+      return value === '' ? { exitCode: 128, stdout: '' } : { exitCode: 0, stdout: value + '\n' }
+    }
+    return { exitCode: 0, stdout: '' }
+  }
+
+  private static parse(argv: readonly string[]): { sub: string, root: string | undefined } {
+    let root: string | undefined
+    let index = 0
+    while (index < argv.length) {
+      const item = argv[index] ?? ''
+      if (item === 'git' || item === '--no-optional-locks') index += 1
+      else if (item === '-c') index += 2
+      else if (item === '-C') {
+        root = argv[index + 1]
+        index += 2
+      } else break
+    }
+    return { sub: argv[index] ?? '', root }
+  }
+}
+
+export class ScriptedModel {
+  readonly requests: ModelRequest[] = []
+  readonly port: ModelPort = (request) => this.answer(request)
+  private readonly queue: (ModelAnswer | Error)[] = []
+  private fallback: ModelAnswer | Error | undefined
+  private hook: ((request: ModelRequest, count: number) => void) | undefined
+
+  static ok(text: string, inputTokens = 100, outputTokens = 50): ModelAnswer {
+    return { isAnswered: true, text, reason: '', inputTokens, outputTokens }
+  }
+
+  static failed(reason: string): ModelAnswer {
+    return { isAnswered: false, text: '', reason, inputTokens: 0, outputTokens: 0 }
+  }
+
+  next(...answers: (ModelAnswer | Error)[]): ScriptedModel {
+    this.queue.push(...answers)
+    return this
+  }
+
+  always(answer: ModelAnswer | Error): ScriptedModel {
+    this.fallback = answer
+    return this
+  }
+
+  during(hook: (request: ModelRequest, count: number) => void): ScriptedModel {
+    this.hook = hook
+    return this
+  }
+
+  crash(): ScriptedModel {
+    return this.always(new Error('model crashed'))
+  }
+
+  private async answer(request: ModelRequest): Promise<ModelAnswer> {
+    this.requests.push(request)
+    this.hook?.(request, this.requests.length)
+    const item = this.queue.shift() ?? this.fallback ?? ScriptedModel.failed('queue empty')
+    if (item instanceof Error) throw item
+    return item
+  }
+}
+
+export class LearnSeed {
+  static readonly NOW = Date.UTC(2026, 10, 5, 12)
+  static readonly BASE = Date.UTC(2026, 10, 4, 10)
+  static readonly KEY = '2026-11/s1.jsonl'
+  static readonly SHA = 'a'.repeat(40)
+  static readonly HEAD = 'b'.repeat(40)
+
+  static evidence(index: number, session = 's1'): string {
+    return `session:${session}:${LearnSeed.BASE + index * 1000}`
+  }
+
+  static commitEvidence(): string {
+    return 'commit:repo:aaaaaaa'
+  }
+
+  static prompt(index: number, text = 'always validate the input before use', session = 's1'): Signal {
+    return {
+      v: 1,
+      at: LearnSeed.BASE + index * 1000,
+      session,
+      project: 'podium',
+      projectId: 'p1',
+      stack: ['node'],
+      kind: 'prompt',
+      data: { length: text.length, language: 'en', command: '', excerpt: text, isCorrection: false, afterAbort: false }
+    }
+  }
+
+  static prompts(fs: MemoryFs, count: number, key = LearnSeed.KEY, session = 's1', text?: string): MemoryFs {
+    const signals = Array.from({ length: count }, (_, index) => LearnSeed.prompt(index, text, session))
+    return fs.seed(SignatureStoreFixture.ROOT + '/journal/' + key, Journal.lines(signals))
+  }
+
+  static raw(partial: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      situation: 'Reading a user-editable config value in a hook',
+      options: ['Validate', 'Trust'],
+      choice: 'Validate it and fall back to a default',
+      why: 'To never crash on a bad value',
+      kind: 'choice',
+      tags: ['fail-open'],
+      evidence: [LearnSeed.evidence(0)],
+      ...partial
+    }
+  }
+
+  static answer(cases: unknown[], candidateTags: unknown[] = []): string {
+    return JSON.stringify({ cases, candidateTags })
+  }
+
+  static candidate(tag = 'rate-limit', parent = 'security'): Record<string, unknown> {
+    return { tag, facet: 'concept', parent, aliases: ['throttling'], why: 'seen often' }
+  }
+
+  static log(sha = LearnSeed.SHA, subject = 'Add feature', numstat: string[] = ['3\t1\tsrc/a.ts']): string {
+    return `${sha}\u001f2026-01-02T10:00:00+00:00\u001f${subject}\u001f\u001e\n\n${numstat.join('\n')}\n`
+  }
+
+  static state(fs: MemoryFs, partial: Record<string, unknown>): MemoryFs {
+    return fs.seed(SignatureStoreFixture.ROOT + '/state.json', JSON.stringify({ version: 1, ...partial }))
+  }
+
+  static failures(count: number): unknown[] {
+    return Array.from({ length: count }, (_, index) => ({ at: index + 1, ok: false, tokens: 0, cases: 0, traits: 0, note: '' }))
+  }
+
+  static cases(fs: MemoryFs, cases: readonly Case[], dir = 'cases'): MemoryFs {
+    const lines = cases.map((item) => SignatureStoreFixture.line(item)).join('')
+    return fs.seed(SignatureStoreFixture.ROOT + '/' + dir + '/000.jsonl', lines)
   }
 }

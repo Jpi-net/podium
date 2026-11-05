@@ -43,6 +43,7 @@ import { Robots } from './robots'
 import { Rules, type RuleHit } from './rules'
 import { Scene, type GraphLabel, type GraphResult, type ToolKind } from './scene'
 import { Signature, type SignaturePorts } from './signature/signature'
+import { SignalExtractor } from './signature/signals'
 import { SignatureView, type SignatureActions } from './signature/view'
 import { Theme } from './theme'
 
@@ -156,7 +157,7 @@ const contextAtom = atom(
   },
   { shape: 'context-4' },
 )
-const signatureAtom = atom({ plugin: 'podium', key: 'signature' } as const, Signature.empty(), { shape: 'signature-1' })
+const signatureAtom = atom({ plugin: 'podium', key: 'signature' } as const, Signature.empty(), { shape: 'signature-2' })
 const viewAtom = atom(
   { plugin: 'podium', key: 'view' } as const,
   { tab: 'flux', mode: 'journal', filter: 'essential', isWhyShown: false, isReplaying: false, replaySpeed: 8, isClosed: false },
@@ -303,7 +304,7 @@ class Flow {
     profile: { tab: 'signature' },
   }
   static readonly FILTERS = ['essential', 'errors', 'all']
-  static readonly SIGNATURE_CONSENT = ['on', 'off', 'pause', 'resume', 'exclude', 'include', 'erase']
+  static readonly SIGNATURE_CONSENT = ['on', 'off', 'pause', 'resume', 'exclude', 'include', 'erase', 'learn-now', 'rebuild', 'forget', 'learn']
   static readonly SKILL = 'podium:setup'
   static readonly RUN_FALLBACK_MS = 30 * 60_000
 
@@ -1570,7 +1571,26 @@ class Flow {
       pause: () => say(Signature.pause()),
       resume: () => say(Signature.resume()),
       erase: () => say(Signature.erase()),
+      learnNow: () => say(Signature.learnNow()),
+      learnFrom: () => void Runtime.io().fill('/podium-stage learn ').catch(() => undefined),
+      keep: id => say(Signature.keep(id)),
+      reject: id => say(Signature.forget(id)),
     }
+  }
+
+  static async awaitSignature(after: (ms: number, fn: () => void) => unknown): Promise<void> {
+    const started = Runtime.signatureStart
+    if (started === undefined) return
+    await Promise.race([
+      started,
+      new Promise<void>(resolve => {
+        try {
+          after(3000, () => resolve())
+        } catch {
+          resolve()
+        }
+      }),
+    ])
   }
 
   static sign(task: () => void): void {
@@ -1612,7 +1632,7 @@ class Flow {
         return
       }
       const isRefused = outcome['deny'] !== undefined || outcome['isError'] === true
-      const reason = outcome['isError'] === true && typeof outcome['text'] === 'string' ? outcome['text'] : ''
+      const reason = outcome['isError'] === true && typeof outcome['text'] === 'string' ? SignalExtractor.rejectionFeedback(outcome['text']) : ''
       const plan = (e as Loose)['plan'] ?? result['plan']
       Signature.onPlan({ plan, isRefused, feedback: reason, isEdited: result['planWasEdited'] === true })
     } catch {
@@ -3048,7 +3068,7 @@ export const register: Register = on => {
     await $.command.register({
       name: 'podium-stage',
       description: 'Live side panel of the agents (tabs: flow, delivery, history, context, tools, signature; reset to clear)',
-      argumentHint: '[flow|delivery|history|context|tools|signature [on|off|pause|resume|exclude <folder>|include <folder>|erase]|recap|accessory [name|list]|notify on|notify off|reset|disco|quad|half|auto|fps <10-60>]',
+      argumentHint: '[flow|delivery|history|context|tools|signature [on|off|pause|resume|learn-now|rebuild|forget <id>|exclude <folder>|include <folder>|erase]|learn <path>|recap|accessory [name|list]|notify on|notify off|reset|disco|quad|half|auto|fps <10-60>]',
     })
     await $.command.register({
       name: 'podium',
@@ -3196,9 +3216,23 @@ export const register: Register = on => {
         env: name => env.get(name) ?? '',
         toast: text => void $.ui.toast(text),
         changed: state => void update($, signatureAtom, () => state).catch(() => undefined),
+        model: async request => Signature.modelAnswer(await $.model.complete(Signature.modelRequest(request))),
+        wait: ms =>
+          new Promise<void>(resolve => {
+            try {
+              $.clock.after(ms, () => resolve())
+            } catch {
+              resolve()
+            }
+          }),
       }
       if (generation !== Runtime.signatureGeneration) return
-      Runtime.timers.push($.clock.every(60_000, () => void Signature.flush().catch(() => undefined)))
+      Runtime.timers.push(
+        $.clock.every(60_000, () => {
+          void Signature.flush().catch(() => undefined)
+          void Signature.tick(Date.now())
+        }),
+      )
       await Signature.start(ports, { cwd: e.cwd, session, isInteractive: e.isInteractive })
       if (generation === Runtime.signatureGeneration) await Flow.introduce()
     })().catch(() => undefined)
@@ -3271,23 +3305,17 @@ export const register: Register = on => {
       Runtime.io().invalidate()
       return { text: `Podium: disco mode ${Runtime.isDisco ? 'on' : 'off'}.` }
     }
+    if (arg === 'learn' || arg.startsWith('learn ')) {
+      const isOwn = e.origin?.kind === 'composer' || e.origin?.kind === 'bridge'
+      if (!isOwn) return { text: 'Run this command yourself.' }
+      await Flow.awaitSignature((ms, fn) => $.clock.after(ms, fn))
+      return { text: await Signature.learn(e.args.trim().slice('learn'.length)) }
+    }
     if (arg.startsWith('signature ')) {
       const word = arg.split(/\s+/)[1] ?? ''
       const isOwn = e.origin?.kind === 'composer' || e.origin?.kind === 'bridge'
       if (Flow.SIGNATURE_CONSENT.includes(word) && !isOwn) return { text: 'Run this command yourself.' }
-      const started = Runtime.signatureStart
-      if (started !== undefined) {
-        await Promise.race([
-          started,
-          new Promise<void>(resolve => {
-            try {
-              $.clock.after(3000, () => resolve())
-            } catch {
-              resolve()
-            }
-          }),
-        ])
-      }
+      await Flow.awaitSignature((ms, fn) => $.clock.after(ms, fn))
       const text = await Signature.command(e.args.trim().slice('signature'.length))
       if (text !== '') return { text }
     }
@@ -3299,6 +3327,7 @@ export const register: Register = on => {
   })
 
   on('tool.call', async ($, e, next) => {
+    Flow.sign(() => Signature.onTool())
     const pending = Flow.prepare(e)
     if (e.tool === 'Write' && pending.path !== '') {
       pending.previous = await Flow.readText(pending.path)
@@ -3328,7 +3357,7 @@ export const register: Register = on => {
 
   on('turn.complete', async ($, e, next) => {
     const r = await next(e)
-    Flow.sign(() => Signature.onTurn(e.reason, e.agentId ?? '', e.turnId))
+    Flow.sign(() => Signature.onTurn(e.reason, e.agentId ?? '', e.turnId, e.answer))
     await Flow.enqueue(() => Flow.completed(e))
     return r
   })

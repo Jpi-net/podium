@@ -1,9 +1,13 @@
+import { Cases, type Case } from './cases'
 import { FormatVersion } from './format-version'
+import { HistoryScanner, type HistoryCursor } from './history'
 import { Journal } from './journal'
 import { SignaturePaths, type SignatureFiles } from './paths'
+import { Profile, type ProfileData } from './profile'
 import { SignatureSettings, type Settings } from './settings'
 import type { Signal } from './signals'
 import { TagIndex, type TagIndexData } from './tag-index'
+import { Vocabulary, type VocabularyOverlay } from './vocabulary'
 
 export type FsEntryLike = { name: string, kind: 'file' | 'dir' | 'other', size: number, mtimeMs: number }
 
@@ -17,7 +21,15 @@ export type FsPort = {
   stat: (path: string) => Promise<FsStat | undefined>
 }
 
-export type EraseResult = { emptied: number, isComplete: boolean }
+export type EraseLock = { owner: string, now: () => number, wait: (ms: number) => Promise<void> }
+
+export type EraseResult = { emptied: number, isComplete: boolean, isLocked: boolean }
+
+export type Lock = { owner: string, expiresAt: number }
+
+export type CaseSet = { cases: Case[], archived: Case[], bad: number }
+
+export type JournalFile = { path: string, key: string, bytes: number, mtimeMs: number }
 
 export type RunEntry = { at: number, ok: boolean, tokens: number, cases: number, traits: number, note: string }
 
@@ -40,6 +52,15 @@ export class SignatureStore {
   private static readonly MAX_TEXT = 500
   private static readonly JOURNAL_KEY = /^\d{4}-\d{2}\/[A-Za-z0-9_-]{1,200}(?:\.\d{1,3})?\.jsonl$/
   private static readonly DAY = /^\d{4}-\d{2}-\d{2}$/
+  private static readonly LOCK_MS = 15 * 60 * 1000
+  private static readonly ERASE_TRIES = 10
+  private static readonly ERASE_PAUSE = 1000
+  private static readonly LOCK_WAIT = 300
+  private static readonly CASES_BUDGET = 6 * 1024 * 1024
+  private static readonly ARCHIVE_BUDGET = 6 * 1024 * 1024
+  private static readonly SHARD = /^\d{3,}\.jsonl$/
+  private static readonly MONTH = /^\d{4}-\d{2}$/
+  private static readonly JOURNAL_NAME = /^[A-Za-z0-9_-]{1,200}(?:\.\d{1,3})?\.jsonl$/
   private static readonly NAME = /^[^/\\]+$/
 
   static async text(fs: FsPort, path: string): Promise<string> {
@@ -182,32 +203,37 @@ export class SignatureStore {
     }
   }
 
-  static async erase(fs: FsPort, files: SignatureFiles, realRoot: string = ''): Promise<EraseResult> {
+  static async erase(fs: FsPort, files: SignatureFiles, realRoot: string = '', lock?: EraseLock): Promise<EraseResult> {
     try {
-      if (!SignatureStore.isRooted(files)) return { emptied: 0, isComplete: false }
-      const budget = { left: SignatureStore.MAX_ENTRIES, isCut: false }
-      const found = await SignatureStore.walk(fs, files.root, files.root, 0, budget)
-      let emptied = 0
-      let isComplete = !budget.isCut
-      for (const item of found) {
-        if (item.size === 0) continue
-        try {
-          if (!await SignatureStore.canWrite(fs, files.root, realRoot, item.path)) {
-            isComplete = false
-            continue
-          }
-          await fs.write(item.path, '')
-          emptied += 1
-        } catch {
-          isComplete = false
-        }
+      if (!SignatureStore.isRooted(files)) return { emptied: 0, isComplete: false, isLocked: false }
+      if (lock === undefined) return await SignatureStore.eraseAll(fs, files, realRoot)
+      let isTaken = false
+      for (let tries = 0; tries < SignatureStore.ERASE_TRIES && !isTaken; tries += 1) {
+        isTaken = await SignatureStore.takeLock(fs, files, lock.owner, lock.now(), realRoot, lock.wait)
+        if (!isTaken && tries < SignatureStore.ERASE_TRIES - 1) await lock.wait(SignatureStore.ERASE_PAUSE)
       }
-      const settings = SignatureSettings.defaults()
-      settings.consent = 'declined'
-      if (!await SignatureStore.writeSettings(fs, files, settings, realRoot)) isComplete = false
-      return { emptied, isComplete }
+      if (!isTaken) return { emptied: 0, isComplete: false, isLocked: true }
+      return await SignatureStore.eraseAll(fs, files, realRoot)
     } catch {
-      return { emptied: 0, isComplete: false }
+      return { emptied: 0, isComplete: false, isLocked: false }
+    }
+  }
+
+  static async listCursors(fs: FsPort, files: SignatureFiles): Promise<HistoryCursor[]> {
+    const found: HistoryCursor[] = []
+    try {
+      if (!SignatureStore.isRooted(files)) return found
+      const entries = await SignatureStore.entries(fs, files.root, files.history)
+      for (const entry of entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))) {
+        if (entry.kind !== 'file' || !(entry.size > 0) || !entry.name.endsWith('.json')) continue
+        const text = await SignatureStore.text(fs, files.history + '/' + entry.name)
+        if (text.trim() === '' || FormatVersion.isNewer(text, SignatureStore.KNOWN_VERSION)) continue
+        const cursor = HistoryScanner.parseCursor(text)
+        if (cursor !== undefined) found.push(cursor)
+      }
+      return found
+    } catch {
+      return found
     }
   }
 
@@ -234,6 +260,167 @@ export class SignatureStore {
     } catch {
       return ''
     }
+  }
+
+  static async takeLock(
+    fs: FsPort, files: SignatureFiles, owner: string, now: number, realRoot: string, wait: (ms: number) => Promise<void>
+  ): Promise<boolean> {
+    try {
+      if (!SignatureStore.isRooted(files) || typeof owner !== 'string' || owner === '' || !Number.isFinite(now)) return false
+      const text = await SignatureStore.text(fs, files.lock)
+      if (text.trim() !== '' && FormatVersion.isNewer(text, SignatureStore.KNOWN_VERSION)) return false
+      const held = SignatureStore.parseLock(text)
+      const isFree = held === undefined || held.owner === owner || held.expiresAt < now
+      if (!isFree) return false
+      const lock = { version: 1, owner, expiresAt: now + SignatureStore.LOCK_MS }
+      if (!await SignatureStore.guardedWrite(fs, files, realRoot, files.lock, JSON.stringify(lock) + '\n')) return false
+      await wait(SignatureStore.LOCK_WAIT)
+      const again = SignatureStore.parseLock(await SignatureStore.text(fs, files.lock))
+      return again !== undefined && again.owner === owner
+    } catch {
+      return false
+    }
+  }
+
+  static async releaseLock(fs: FsPort, files: SignatureFiles, owner: string, realRoot: string): Promise<void> {
+    try {
+      if (!SignatureStore.isRooted(files)) return
+      const held = SignatureStore.parseLock(await SignatureStore.text(fs, files.lock))
+      if (held === undefined || held.owner !== owner) return
+      await SignatureStore.guardedWrite(fs, files, realRoot, files.lock, '')
+    } catch {
+      return
+    }
+  }
+
+  static async readCases(fs: FsPort, files: SignatureFiles): Promise<CaseSet> {
+    const set: CaseSet = { cases: [], archived: [], bad: 0 }
+    try {
+      if (!SignatureStore.isRooted(files)) return set
+      const active = await SignatureStore.readShards(fs, files.root, files.cases)
+      const archived = await SignatureStore.readShards(fs, files.root, files.archive)
+      const ids = new Set<number>()
+      for (const item of active.cases) {
+        ids.add(item.id)
+        set.cases.push(item)
+      }
+      for (const item of archived.cases) {
+        if (!ids.has(item.id)) set.archived.push(item)
+      }
+      set.bad = active.bad + archived.bad
+      return set
+    } catch {
+      return set
+    }
+  }
+
+  static async writeCases(
+    fs: FsPort, files: SignatureFiles, cases: readonly Case[], archived: readonly Case[], realRoot: string
+  ): Promise<boolean> {
+    try {
+      if (!SignatureStore.isRooted(files)) return false
+      const active = SignatureStore.fit(cases, SignatureStore.CASES_BUDGET)
+      const kept = new Set(active.map((item) => item.id))
+      const old = SignatureStore.fit(archived.filter((item) => !kept.has(item.id)), SignatureStore.ARCHIVE_BUDGET)
+      const first = await SignatureStore.writeShards(fs, files, files.cases, active, realRoot)
+      const second = await SignatureStore.writeShards(fs, files, files.archive, old, realRoot)
+      return first && second
+    } catch {
+      return false
+    }
+  }
+
+  static async writeIndex(fs: FsPort, files: SignatureFiles, index: TagIndexData, realRoot: string): Promise<boolean> {
+    return SignatureStore.safeWrite(fs, files, realRoot, files.index, () => TagIndex.serialize(index))
+  }
+
+  static async readProfile(fs: FsPort, files: SignatureFiles): Promise<ReadResult<ProfileData>> {
+    return SignatureStore.readTolerant(fs, files, files.profile, (text) => Profile.parse(text), () => Profile.empty())
+  }
+
+  static async writeProfile(fs: FsPort, files: SignatureFiles, profile: ProfileData, realRoot: string): Promise<boolean> {
+    return SignatureStore.safeWrite(fs, files, realRoot, files.profile, () => Profile.serialize(profile))
+  }
+
+  static async readOverlay(fs: FsPort, files: SignatureFiles): Promise<ReadResult<VocabularyOverlay>> {
+    return SignatureStore.readTolerant(fs, files, files.vocabulary, (text) => Vocabulary.parseOverlay(text), () => Vocabulary.parseOverlay(''))
+  }
+
+  static async writeOverlay(fs: FsPort, files: SignatureFiles, overlay: VocabularyOverlay, realRoot: string): Promise<boolean> {
+    return SignatureStore.safeWrite(fs, files, realRoot, files.vocabulary, () => Vocabulary.serializeOverlay(overlay))
+  }
+
+  static async readCursor(fs: FsPort, files: SignatureFiles, repoId: string): Promise<HistoryCursor | undefined> {
+    try {
+      if (!SignatureStore.isRooted(files)) return undefined
+      const path = SignaturePaths.historyFile(files.root, repoId)
+      if (!SignaturePaths.isInside(files.root, path)) return undefined
+      const text = await SignatureStore.text(fs, path)
+      if (text.trim() === '' || FormatVersion.isNewer(text, SignatureStore.KNOWN_VERSION)) return undefined
+      return HistoryScanner.parseCursor(text)
+    } catch {
+      return undefined
+    }
+  }
+
+  static async writeCursor(fs: FsPort, files: SignatureFiles, repoId: string, cursor: HistoryCursor, realRoot: string): Promise<boolean> {
+    if (!SignatureStore.isRooted(files)) return false
+    const path = SignaturePaths.historyFile(files.root, repoId)
+    return SignatureStore.safeWrite(fs, files, realRoot, path, () => HistoryScanner.serializeCursor(cursor))
+  }
+
+  static async journalFiles(fs: FsPort, files: SignatureFiles): Promise<JournalFile[]> {
+    const found: JournalFile[] = []
+    try {
+      if (!SignatureStore.isRooted(files)) return found
+      for (const month of await SignatureStore.entries(fs, files.root, files.journal)) {
+        if (month.kind !== 'dir' || !SignatureStore.MONTH.test(month.name)) continue
+        const dir = files.journal + '/' + month.name
+        for (const entry of await SignatureStore.entries(fs, files.root, dir)) {
+          const bytes = typeof entry.size === 'number' && Number.isFinite(entry.size) ? entry.size : 0
+          if (entry.kind !== 'file' || bytes <= 0 || !SignatureStore.JOURNAL_NAME.test(entry.name)) continue
+          const mtimeMs = typeof entry.mtimeMs === 'number' && Number.isFinite(entry.mtimeMs) ? entry.mtimeMs : 0
+          found.push({ path: dir + '/' + entry.name, key: month.name + '/' + entry.name, bytes, mtimeMs })
+        }
+      }
+      return found.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
+    } catch {
+      return found
+    }
+  }
+
+  static async emptyFile(fs: FsPort, files: SignatureFiles, path: string, realRoot: string): Promise<boolean> {
+    return SignatureStore.put(fs, files, realRoot, path, '')
+  }
+
+  static async quarantine(fs: FsPort, files: SignatureFiles, path: string, text: string, now: number, realRoot: string): Promise<boolean> {
+    if (typeof path !== 'string' || typeof text !== 'string' || !Number.isFinite(now)) return false
+    return SignatureStore.put(fs, files, realRoot, path + '.corrupt-' + Math.floor(now), text)
+  }
+
+  private static async eraseAll(fs: FsPort, files: SignatureFiles, realRoot: string): Promise<EraseResult> {
+    const budget = { left: SignatureStore.MAX_ENTRIES, isCut: false }
+    const found = await SignatureStore.walk(fs, files.root, files.root, 0, budget)
+    let emptied = 0
+    let isComplete = !budget.isCut
+    let hasLock = false
+    for (const item of found) {
+      if (item.size === 0) continue
+      if (item.path === files.lock) {
+        hasLock = true
+        continue
+      }
+      if (await SignatureStore.put(fs, files, realRoot, item.path, '')) emptied += 1
+      else isComplete = false
+    }
+    const settings = SignatureSettings.defaults()
+    settings.consent = 'declined'
+    if (!await SignatureStore.writeSettings(fs, files, settings, realRoot)) isComplete = false
+    if (hasLock) {
+      if (await SignatureStore.put(fs, files, realRoot, files.lock, '')) emptied += 1
+      else isComplete = false
+    }
+    return { emptied, isComplete, isLocked: false }
   }
 
   private static async walk(
@@ -269,6 +456,129 @@ export class SignatureStore {
       }
     }
     return found
+  }
+
+  private static parseLock(text: string): Lock | undefined {
+    try {
+      const raw = SignatureStore.record(JSON.parse(text))
+      if (raw === undefined || typeof raw.owner !== 'string' || raw.owner === '') return undefined
+      if (typeof raw.expiresAt !== 'number' || !Number.isFinite(raw.expiresAt)) return undefined
+      return { owner: raw.owner, expiresAt: raw.expiresAt }
+    } catch {
+      return undefined
+    }
+  }
+
+  private static async entries(fs: FsPort, root: string, dir: string): Promise<FsEntryLike[]> {
+    try {
+      if (!SignaturePaths.isInside(root, dir)) return []
+      const listed = await fs.list(dir)
+      if (!Array.isArray(listed)) return []
+      return listed.filter((entry) => entry && typeof entry.name === 'string' && SignatureStore.NAME.test(entry.name) && entry.name !== '.' && entry.name !== '..')
+    } catch {
+      return []
+    }
+  }
+
+  private static async shardNames(fs: FsPort, root: string, dir: string): Promise<FsEntryLike[]> {
+    const entries = await SignatureStore.entries(fs, root, dir)
+    return entries
+      .filter((entry) => entry.kind === 'file' && SignatureStore.SHARD.test(entry.name))
+      .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+  }
+
+  private static async readShards(fs: FsPort, root: string, dir: string): Promise<{ cases: Case[], bad: number }> {
+    const byId = new Map<number, Case>()
+    let bad = 0
+    for (const entry of await SignatureStore.shardNames(fs, root, dir)) {
+      if (!(entry.size > 0)) continue
+      let text = ''
+      try {
+        text = await fs.read(dir + '/' + entry.name)
+      } catch {
+        bad += 1
+        continue
+      }
+      const parsed = Cases.fromLines(typeof text === 'string' ? text : '')
+      bad += parsed.bad
+      for (const item of parsed.cases) byId.set(item.id, item)
+    }
+    return { cases: [...byId.values()].sort((a, b) => a.id - b.id), bad }
+  }
+
+  private static fit(cases: readonly Case[], limit: number): Case[] {
+    const unique = new Map<number, Case>()
+    for (const item of cases) unique.set(item.id, item)
+    const list = [...unique.values()].sort((a, b) => a.id - b.id)
+    let total = 0
+    for (const item of list) total += Journal.byteLength(Cases.toLine(item)) + 1
+    if (total <= limit) return list
+    const order = [...list].sort((a, b) => (a.lastSeen < b.lastSeen ? -1 : a.lastSeen > b.lastSeen ? 1 : a.id - b.id))
+    const dropped = new Set<number>()
+    for (const item of order) {
+      if (total <= limit) break
+      total -= Journal.byteLength(Cases.toLine(item)) + 1
+      dropped.add(item.id)
+    }
+    return list.filter((item) => !dropped.has(item.id))
+  }
+
+  private static async writeShards(fs: FsPort, files: SignatureFiles, dir: string, cases: readonly Case[], realRoot: string): Promise<boolean> {
+    const shards = new Map<number, Case[]>()
+    for (const item of cases) {
+      const shard = SignaturePaths.shardOf(item.id)
+      const list = shards.get(shard) ?? []
+      list.push(item)
+      shards.set(shard, list)
+    }
+    let isDone = true
+    const written = new Set<string>()
+    for (const [shard, list] of [...shards.entries()].sort((a, b) => a[0] - b[0])) {
+      const path = SignaturePaths.shardFile(dir, shard)
+      written.add(path)
+      const text = list.map((item) => Cases.toLine(item)).join('\n') + '\n'
+      if (!await SignatureStore.put(fs, files, realRoot, path, text)) isDone = false
+    }
+    for (const entry of await SignatureStore.shardNames(fs, files.root, dir)) {
+      const path = dir + '/' + entry.name
+      if (written.has(path) || !(entry.size > 0)) continue
+      if (!await SignatureStore.put(fs, files, realRoot, path, '')) isDone = false
+    }
+    return isDone
+  }
+
+  private static async readTolerant<T>(
+    fs: FsPort, files: SignatureFiles, path: string, parse: (text: string) => T, empty: () => T
+  ): Promise<ReadResult<T>> {
+    try {
+      if (!SignatureStore.isRooted(files)) return { value: empty(), isNewer: false, isCorrupt: false }
+      const text = await SignatureStore.text(fs, path)
+      if (text.trim() === '') return { value: empty(), isNewer: false, isCorrupt: false }
+      if (FormatVersion.isNewer(text, SignatureStore.KNOWN_VERSION)) return { value: empty(), isNewer: true, isCorrupt: false }
+      return { value: parse(text), isNewer: false, isCorrupt: !SignatureStore.isObject(text) }
+    } catch {
+      return { value: empty(), isNewer: false, isCorrupt: false }
+    }
+  }
+
+  private static async safeWrite(
+    fs: FsPort, files: SignatureFiles, realRoot: string, path: string, render: () => string
+  ): Promise<boolean> {
+    try {
+      return await SignatureStore.guardedWrite(fs, files, realRoot, path, render())
+    } catch {
+      return false
+    }
+  }
+
+  private static async put(fs: FsPort, files: SignatureFiles, realRoot: string, path: string, text: string): Promise<boolean> {
+    try {
+      if (!SignatureStore.isRooted(files) || !await SignatureStore.canWrite(fs, files.root, realRoot, path)) return false
+      await fs.write(path, text)
+      return true
+    } catch {
+      return false
+    }
   }
 
   private static async guardedWrite(fs: FsPort, files: SignatureFiles, realRoot: string, path: string, text: string): Promise<boolean> {

@@ -210,7 +210,7 @@ Aliases of version 1 are listed in `Vocabulary.BASE` in code; each tag has betwe
 ## history/<repo-id>.json
 
 ```json
-{ "version": 1, "root": "/Users/…/podium", "name": "podium", "identities": ["…"], "head": "67a1b34", "done": ["a1b2c3d", "…"], "scanned": 214, "selected": 61, "complete": false, "source": "auto" }
+{ "version": 1, "root": "/Users/…/podium", "name": "podium", "identities": ["…"], "head": "67a1b34", "done": ["a1b2c3d", "…"], "scanned": 214, "selected": 61, "isComplete": false, "source": "auto" }
 ```
 
 `done` keeps the shas already sent to the model (at most 2,000, oldest dropped). `source` is `auto` (the current repository) or `manual` (`/podium-stage learn`).

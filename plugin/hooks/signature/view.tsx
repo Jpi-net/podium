@@ -15,6 +15,10 @@ export type SignatureActions = {
   pause: () => void
   resume: () => void
   erase: () => void
+  learnNow: () => void
+  learnFrom: () => void
+  keep: (id: string) => void
+  reject: (id: string) => void
 }
 
 type Row = { label: string, text: string }
@@ -35,12 +39,13 @@ export class SignatureView {
   private static readonly CHOICES: readonly Choice[] = [
     { key: 'sessions', label: 'Learn from my sessions' },
     { key: 'history', label: 'Read the history of repositories I open' },
-    { key: 'pastSessions', label: 'Read my past Claude Code sessions once' },
     { key: 'background', label: 'Learn in the background when idle' },
     { key: 'apply', label: 'Bring my profile into every session' }
   ]
   private static readonly EXCLUDE_HINT = 'Never learn in: add a .podium-private file to a folder, or /podium-stage signature exclude <folder>'
   private static readonly OFF_HINT = 'Turn it on with /podium-stage signature on.'
+  private static readonly BAR = 9
+  private static readonly REVIEW_SHOWN = 5
   private static readonly CONFIRM = 'Press Erase again within 30 seconds to erase everything Signature stored.'
 
   static render(ui: Ui, width: number, state: SignatureViewState, actions: SignatureActions): RenderElement[] {
@@ -186,22 +191,117 @@ export class SignatureView {
     return `index ${SignatureView.bytes(sizes.indexBytes)} · cases ${SignatureView.bytes(sizes.casesBytes)} · journal ${SignatureView.bytes(sizes.journalBytes)} · ${empty}`
   }
 
+  static ago(now: number, at: number): string {
+    if (typeof at !== 'number' || at <= 0) return 'never'
+    const minutes = Math.max(0, Math.floor((now - at) / 60_000))
+    if (minutes < 1) return 'just now'
+    if (minutes < 60) return `${minutes} min ago`
+    if (minutes < 60 * 24) return `${Math.floor(minutes / 60)} h ago`
+    return `${Math.floor(minutes / (60 * 24))} d ago`
+  }
+
+  static bar(strength: number): string {
+    const value = typeof strength === 'number' && Number.isFinite(strength) ? Math.min(1, Math.max(0, strength)) : 0
+    const filled = Math.round(value * SignatureView.BAR)
+    return '█'.repeat(filled) + '░'.repeat(SignatureView.BAR - filled)
+  }
+
+  static tokens(count: number): string {
+    const value = typeof count === 'number' && Number.isFinite(count) && count > 0 ? count : 0
+    return value < 1000 ? String(Math.round(value)) : `${(value / 1000).toFixed(1)} k`
+  }
+
+  private static status(state: SignatureViewState, now: number): string {
+    const learning = state.learning
+    if (state.consent === 'paused') return '◌ paused'
+    if (learning.isRunning) {
+      const progress = learning.total > 0 ? ` ${learning.done}/${learning.total}` : ''
+      return `● learning (${learning.step === '' ? 'starting' : learning.step}${progress})`
+    }
+    const next = learning.nextRunHint === '' ? '' : ` · next ${learning.nextRunHint}`
+    return `● on · last run ${SignatureView.ago(now, learning.lastRunAt)}${next}`
+  }
+
+  private static lenses(ui: Ui, width: number, state: SignatureViewState): RenderElement[] {
+    const out: RenderElement[] = []
+    const names = state.lenses.map((item) => SignatureView.title(item.lens))
+    const pad = Math.min(14, Math.max(...names.map((name) => name.length), 0) + 2)
+    state.lenses.forEach((item, index) => {
+      const name = names[index] ?? ''
+      const bar = SignatureView.bar(item.strength)
+      if (width < SignatureView.NARROW) {
+        out.push(SignatureView.line(ui, `sig-lens-${index}`, width, ` ${name} ${bar}`, Theme.TEXT))
+        return
+      }
+      out.push(SignatureView.line(ui, `sig-lens-${index}`, width, ` ${Theme.pad(name, pad)}${bar}  ${item.summary}`, Theme.TEXT))
+      if (item.blindSpot !== '') out.push(SignatureView.line(ui, `sig-blind-${index}`, width, ` ${' '.repeat(pad)}blind spot: ${item.blindSpot}`, Theme.MUTED))
+    })
+    return out
+  }
+
+  private static title(lens: string): string {
+    return lens === '' ? '' : lens.charAt(0).toUpperCase() + lens.slice(1)
+  }
+
+  private static review(ui: Ui, width: number, state: SignatureViewState, actions: SignatureActions): RenderElement[] {
+    const out: RenderElement[] = []
+    const shown = state.review.slice(0, SignatureView.REVIEW_SHOWN)
+    for (const item of shown) {
+      out.push(...SignatureView.paragraph(ui, `sig-review-${item.id}`, width, `${SignatureView.title(item.lens)}: ${item.statement}`, Theme.TEXT))
+      out.push(
+        ...SignatureView.buttons(ui, `sig-review-actions-${item.id}`, width, [
+          { label: '✓ Keep', color: Theme.OK, onPress: () => actions.keep(item.id) },
+          { label: '✗ Not me', color: Theme.MUTED, onPress: () => actions.reject(item.id) }
+        ])
+      )
+    }
+    if (state.review.length > shown.length) {
+      out.push(SignatureView.line(ui, 'sig-review-more', width, ` +${state.review.length - shown.length} more to review`, Theme.MUTED))
+    }
+    return out
+  }
+
+  private static repositories(state: SignatureViewState): string {
+    const marks: Record<string, string> = { done: '✓', learning: '…', pending: '·', excluded: '(excluded)', 'no-identity': '(no identity)' }
+    return state.repositories.map((item) => `${item.name} ${marks[item.state] ?? ''}`.trim()).join('  ')
+  }
+
   private static dashboard(ui: Ui, width: number, state: SignatureViewState, actions: SignatureActions): RenderElement[] {
     const { Text } = ui
+    const now = Date.now()
     const isPaused = state.consent === 'paused'
     const out: RenderElement[] = []
+    const label = (text: string): string => Theme.pad(` ${text}`, SignatureView.LABEL)
     out.push(
       <Text key="sig-status">
         <Text color={SignatureView.hex(Theme.ACCENT)} bold>
-          {Theme.pad(' Learning', SignatureView.LABEL)}
+          {label('Learning')}
         </Text>
-        <Text color={SignatureView.hex(isPaused ? Theme.WARN : Theme.OK)}>{isPaused ? '◌ paused' : '● on'}</Text>
+        <Text color={SignatureView.hex(isPaused ? Theme.WARN : Theme.OK)}>{Theme.truncate(SignatureView.status(state, now), Math.max(10, width - SignatureView.LABEL))}</Text>
       </Text>
     )
+    const counts = state.counts
     out.push(
-      SignatureView.line(ui, 'sig-signals', width, ` ${Theme.pad('Recorded', SignatureView.LABEL - 1)}${state.signals} signals this session · ${state.buffered} waiting to be saved`, Theme.TEXT)
+      SignatureView.line(ui, 'sig-profile', width, `${label('Profile')}${counts.traits} traits (${counts.confirmed} confirmed) · ${counts.cases} cases · ${counts.newTraits} new`, Theme.TEXT)
     )
-    out.push(SignatureView.line(ui, 'sig-storage', width, ` ${Theme.pad('Storage', SignatureView.LABEL - 1)}${SignatureView.storage(state.storage)}`, Theme.MUTED))
+    out.push(SignatureView.line(ui, 'sig-signals', width, `${label('Recorded')}${state.signals} signals this session · ${state.buffered} waiting to be saved`, Theme.TEXT))
+    out.push(SignatureView.line(ui, 'sig-tokens', width, `${label('Today')}${SignatureView.tokens(state.tokensToday)} tokens used`, Theme.MUTED))
+    out.push(SignatureView.line(ui, 'sig-storage', width, `${label('Storage')}${SignatureView.storage(state.storage)}`, Theme.MUTED))
+    if (state.repositories.length > 0) {
+      out.push(SignatureView.line(ui, 'sig-repos', width, `${label('Repositories')}${SignatureView.repositories(state)}`, Theme.TEXT))
+    }
+    if (state.lenses.length > 0) {
+      out.push(SignatureView.blank(ui, 'sig-gap-lenses'))
+      out.push(...SignatureView.lenses(ui, width, state))
+    }
+    if (state.review.length > 0) {
+      out.push(SignatureView.blank(ui, 'sig-gap-review'))
+      out.push(SignatureView.line(ui, 'sig-review-title', width, ` To review (${state.review.length})`, Theme.ACCENT, true))
+      out.push(...SignatureView.review(ui, width, state, actions))
+    }
+    if (state.learning.lastError !== '' && !state.learning.isRunning) {
+      out.push(...SignatureView.paragraph(ui, 'sig-learn-error', width, `Last run: ${state.learning.lastError}`, Theme.WARN))
+    }
     if (state.lost > 0) {
       out.push(SignatureView.line(ui, 'sig-lost', width, ` ${state.lost} signals were dropped because the buffer was full.`, Theme.WARN))
     }
@@ -216,13 +316,15 @@ export class SignatureView {
     out.push(
       ...SignatureView.buttons(ui, 'sig-actions', width, [
         isPaused ? { label: 'Resume', color: Theme.OK, onPress: actions.resume } : { label: 'Pause', color: Theme.TEXT, onPress: actions.pause },
+        { label: 'Learn now', color: Theme.TEXT, onPress: actions.learnNow },
+        { label: 'Learn from another repository…', color: Theme.TEXT, onPress: actions.learnFrom },
         { label: 'Erase…', color: Theme.KO, onPress: actions.erase }
       ])
     )
     const isConfirming = state.confirmErase && (state.confirmUntil <= 0 || Date.now() < state.confirmUntil)
     if (isConfirming) out.push(...SignatureView.paragraph(ui, 'sig-confirm', width, SignatureView.CONFIRM, Theme.WARN))
     out.push(SignatureView.blank(ui, 'sig-gap-2'))
-    out.push(...SignatureView.paragraph(ui, 'sig-hint', width, 'Signature only records for now. Skip a folder with /podium-stage signature exclude <folder>.', Theme.FAINT))
+    out.push(...SignatureView.paragraph(ui, 'sig-hint', width, 'Skip a folder with /podium-stage signature exclude <folder>. Tag suggestions are not reviewable here yet.', Theme.FAINT))
     return out
   }
 }

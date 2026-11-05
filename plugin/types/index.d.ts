@@ -142,6 +142,42 @@ export type SignatureSizes = {
   emptyFiles: number
 }
 
+export type SignatureLearning = {
+  isRunning: boolean
+  step: string
+  done: number
+  total: number
+  lastRunAt: number
+  lastError: string
+  nextRunHint: string
+}
+
+export type SignatureCounts = {
+  traits: number
+  confirmed: number
+  cases: number
+  newTraits: number
+}
+
+export type SignatureLens = {
+  lens: string
+  strength: number
+  summary: string
+  blindSpot: string
+}
+
+export type SignatureReview = {
+  id: string
+  statement: string
+  lens: string
+  confidence: number
+}
+
+export type SignatureRepository = {
+  name: string
+  state: 'done' | 'learning' | 'pending' | 'excluded' | 'no-identity'
+}
+
 export type SignatureViewState = {
   consent: SignatureConsent
   draft: SignatureDraft
@@ -156,6 +192,12 @@ export type SignatureViewState = {
   confirmErase: boolean
   confirmUntil: number
   lastError: string
+  learning: SignatureLearning
+  counts: SignatureCounts
+  lenses: SignatureLens[]
+  review: SignatureReview[]
+  repositories: SignatureRepository[]
+  tokensToday: number
 }
 
 export type HistoryMode = 'journal' | 'couloirs'

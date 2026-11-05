@@ -23,7 +23,7 @@ Signature still sends nothing to any server other than the model calls of the us
 | Threat | Mitigation |
 |---|---|
 | A secret typed in a prompt ends in the journal | `Redactor` before buffering; conservative rules; tests per rule |
-| A secret in a commit diff is sent to the model | `Redactor` on excerpts; lock files, `.env*`, key files (`*.pem`, `*.key`, `id_*`) and binary diffs excluded from `git show` paths |
+| A secret in a commit diff is sent to the model | `Redactor` on excerpts; lock files, environment files, key and credential files and binary diffs excluded from `git show` paths (`HistoryScanner.isNoise`), paths passed as `:(literal)` pathspecs, and the repository's diff drivers never run (`--no-textconv`, so git-crypt or sops never decrypt into an excerpt) |
 | Client code under NDA is read | `exclude`, `.podium-private`; external repositories only by explicit command |
 | The profile leaks into a shared repository | never written into a project; `/podium` copies only choices validated in its proposal |
 | An export is shared publicly with project names | `--anonymous` export; identities never exported |
@@ -33,6 +33,8 @@ Signature still sends nothing to any server other than the model calls of the us
 | Git argument injection | argv arrays only; shas validated `^[0-9a-f]{7,40}$`; identities validated as emails before `--author=`; paths passed after `--` |
 | A symbolic link planted inside `~/.claude/podium/` makes writes land elsewhere (`$.fs.write` follows links) | the real path of the root is resolved at start; every write checks its parent's real path is inside it and that the target is not a link |
 | Another plugin or the model runs `/podium-stage signature on` or `erase` | state-changing subcommands run only when the person typed them (command origin) |
+| Consent revoked in one window while another learns | every run re-reads `settings.json` after taking the lock and before each model call and write; erase takes the lock |
+| A crafted repository's `.git/config` runs a command through a diff driver | `--no-textconv` and `--no-ext-diff` on every `git log` and `git show` |
 | Runaway cost | per-run and per-day token caps, run count cap, backoff, visible counter |
 | Data growth | budgets in `data-model.md` |
 | Lock starvation or corruption | lock TTL; corrupt files quarantined and rebuilt |

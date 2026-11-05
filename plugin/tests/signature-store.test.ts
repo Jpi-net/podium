@@ -2,7 +2,11 @@ import { expect, test } from 'claude-code/testing'
 import { SignaturePaths } from '../hooks/signature/paths'
 import { SignatureSettings } from '../hooks/signature/settings'
 import { SignatureStore } from '../hooks/signature/store'
+import { HistoryScanner } from '../hooks/signature/history'
+import { Profile } from '../hooks/signature/profile'
 import { TagIndex } from '../hooks/signature/tag-index'
+import { Vocabulary } from '../hooks/signature/vocabulary'
+import { SignatureFixtures } from './fixtures/signature'
 import { MemoryFs, SignatureStoreFixture } from './fixtures/signature-fs'
 
 const files = SignatureStoreFixture.files()
@@ -641,7 +645,7 @@ test('erase is not complete when the real root is unknown', async () => {
   const result = await SignatureStore.erase(SignatureStoreFixture.filled(), files, '')
 
   // Assert
-  expect(result).toEqual({ emptied: 0, isComplete: false })
+  expect(result).toEqual({ emptied: 0, isComplete: false, isLocked: false })
 })
 
 test('erase is not complete when the depth cap is hit', async () => {
@@ -658,5 +662,669 @@ test('erase is not complete when the depth cap is hit', async () => {
 
 test('erase of a root that is not safe reports nothing emptied and not complete', async () => {
   // Assert
-  expect(await SignatureStore.erase(new MemoryFs(), SignaturePaths.files('/'), '/')).toEqual({ emptied: 0, isComplete: false })
+  expect(await SignatureStore.erase(new MemoryFs(), SignaturePaths.files('/'), '/')).toEqual({ emptied: 0, isComplete: false, isLocked: false })
+})
+
+class LockFixture {
+  static lock(owner: string, expiresAt: number): string {
+    return JSON.stringify({ version: 1, owner, expiresAt }) + '\n'
+  }
+
+  static idle(): Promise<void> {
+    return Promise.resolve()
+  }
+}
+
+const NOW = 1_000_000
+
+test('takeLock is taken when there is no lock', async () => {
+  // Arrange
+  const fs = SignatureStoreFixture.fresh()
+
+  // Act
+  const isTaken = await SignatureStore.takeLock(fs, files, 'me', NOW, root, LockFixture.idle)
+
+  // Assert
+  expect(isTaken).toBe(true)
+  expect(JSON.parse(fs.text(files.lock) ?? '{}').owner).toBe('me')
+})
+
+test('takeLock sets an expiry fifteen minutes ahead', async () => {
+  // Arrange
+  const fs = SignatureStoreFixture.fresh()
+
+  // Act
+  await SignatureStore.takeLock(fs, files, 'me', NOW, root, LockFixture.idle)
+
+  // Assert
+  expect(JSON.parse(fs.text(files.lock) ?? '{}').expiresAt).toBe(NOW + 15 * 60 * 1000)
+})
+
+test('takeLock is taken over an expired lock', async () => {
+  // Arrange
+  const fs = SignatureStoreFixture.fresh().seed(files.lock, LockFixture.lock('other', NOW - 1))
+
+  // Assert
+  expect(await SignatureStore.takeLock(fs, files, 'me', NOW, root, LockFixture.idle)).toBe(true)
+})
+
+test('takeLock is taken again by its own owner', async () => {
+  // Arrange
+  const fs = SignatureStoreFixture.fresh().seed(files.lock, LockFixture.lock('me', NOW + 5000))
+
+  // Assert
+  expect(await SignatureStore.takeLock(fs, files, 'me', NOW, root, LockFixture.idle)).toBe(true)
+})
+
+test('takeLock is taken over a corrupt lock file', async () => {
+  // Arrange
+  const fs = SignatureStoreFixture.fresh().seed(files.lock, 'garbage')
+
+  // Assert
+  expect(await SignatureStore.takeLock(fs, files, 'me', NOW, root, LockFixture.idle)).toBe(true)
+})
+
+test('takeLock is refused while another owner holds a live lock', async () => {
+  // Arrange
+  const fs = SignatureStoreFixture.fresh().seed(files.lock, LockFixture.lock('other', NOW + 5000))
+
+  // Act
+  const isTaken = await SignatureStore.takeLock(fs, files, 'me', NOW, root, LockFixture.idle)
+
+  // Assert
+  expect(isTaken).toBe(false)
+  expect(fs.writes).toEqual([])
+})
+
+test('takeLock is refused when the lock file has a newer version', async () => {
+  // Arrange
+  const fs = SignatureStoreFixture.fresh().seed(files.lock, '{"version":2}')
+
+  // Assert
+  expect(await SignatureStore.takeLock(fs, files, 'me', NOW, root, LockFixture.idle)).toBe(false)
+})
+
+test('takeLock is refused without a real root', async () => {
+  // Arrange
+  const fs = SignatureStoreFixture.fresh()
+
+  // Act
+  const isTaken = await SignatureStore.takeLock(fs, files, 'me', NOW, '', LockFixture.idle)
+
+  // Assert
+  expect(isTaken).toBe(false)
+  expect(fs.writes).toEqual([])
+})
+
+test('takeLock is refused for an empty owner', async () => {
+  // Assert
+  expect(await SignatureStore.takeLock(SignatureStoreFixture.fresh(), files, '', NOW, root, LockFixture.idle)).toBe(false)
+})
+
+test('takeLock waits 300 ms before it checks the lock again', async () => {
+  // Arrange
+  const waits: number[] = []
+
+  // Act
+  await SignatureStore.takeLock(SignatureStoreFixture.fresh(), files, 'me', NOW, root, async (ms) => {
+    waits.push(ms)
+  })
+
+  // Assert
+  expect(waits).toEqual([300])
+})
+
+test('takeLock is lost when a competing owner writes during the wait', async () => {
+  // Arrange
+  const fs = SignatureStoreFixture.fresh()
+
+  // Act
+  const isTaken = await SignatureStore.takeLock(fs, files, 'me', NOW, root, async () => {
+    fs.seed(files.lock, LockFixture.lock('rival', NOW + 5000))
+  })
+
+  // Assert
+  expect(isTaken).toBe(false)
+})
+
+test('releaseLock empties a lock it owns', async () => {
+  // Arrange
+  const fs = SignatureStoreFixture.fresh().seed(files.lock, LockFixture.lock('me', NOW + 5000))
+
+  // Act
+  await SignatureStore.releaseLock(fs, files, 'me', root)
+
+  // Assert
+  expect(fs.text(files.lock)).toBe('')
+})
+
+test('releaseLock leaves a lock held by another owner', async () => {
+  // Arrange
+  const text = LockFixture.lock('other', NOW + 5000)
+  const fs = SignatureStoreFixture.fresh().seed(files.lock, text)
+
+  // Act
+  await SignatureStore.releaseLock(fs, files, 'me', root)
+
+  // Assert
+  expect(fs.text(files.lock)).toBe(text)
+})
+
+test('releaseLock writes nothing without a real root', async () => {
+  // Arrange
+  const text = LockFixture.lock('me', NOW + 5000)
+  const fs = SignatureStoreFixture.fresh().seed(files.lock, text)
+
+  // Act
+  await SignatureStore.releaseLock(fs, files, 'me', '')
+
+  // Assert
+  expect(fs.text(files.lock)).toBe(text)
+})
+
+test('readCases of an empty root is empty', async () => {
+  // Assert
+  expect(await SignatureStore.readCases(SignatureStoreFixture.fresh(), files)).toEqual({ cases: [], archived: [], bad: 0 })
+})
+
+test('readCases with a bad root never touches the file system', async () => {
+  // Arrange
+  const fs = new MemoryFs()
+
+  // Act
+  for (const bad of SignatureStoreFixture.badRoots()) await SignatureStore.readCases(fs, SignaturePaths.files(bad))
+
+  // Assert
+  expect(fs.calls).toEqual([])
+})
+
+test('writeCases then readCases gives back cases over several shards', async () => {
+  // Arrange
+  const fs = SignatureStoreFixture.fresh()
+  const cases = [1, 2, 300, 600].map((id) => SignatureFixtures.caseOf({ id }))
+
+  // Act
+  await SignatureStore.writeCases(fs, files, cases, [], root)
+  const read = await SignatureStore.readCases(fs, files)
+
+  // Assert
+  expect(read.cases.map((item) => item.id)).toEqual([1, 2, 300, 600])
+  expect(fs.writes).toContain(files.cases + '/000.jsonl')
+  expect(fs.writes).toContain(files.cases + '/001.jsonl')
+  expect(fs.writes).toContain(files.cases + '/002.jsonl')
+})
+
+test('writeCases puts archived cases in the archive shards', async () => {
+  // Arrange
+  const fs = SignatureStoreFixture.fresh()
+
+  // Act
+  await SignatureStore.writeCases(fs, files, [SignatureFixtures.caseOf({ id: 1 })], [SignatureFixtures.caseOf({ id: 5 })], root)
+  const read = await SignatureStore.readCases(fs, files)
+
+  // Assert
+  expect(read.cases.map((item) => item.id)).toEqual([1])
+  expect(read.archived.map((item) => item.id)).toEqual([5])
+  expect(fs.text(files.archive + '/000.jsonl')).not.toBe(undefined)
+})
+
+test('writeCases keeps an id that is both active and archived only as active', async () => {
+  // Arrange
+  const fs = SignatureStoreFixture.fresh()
+
+  // Act
+  await SignatureStore.writeCases(fs, files, [SignatureFixtures.caseOf({ id: 1 })], [SignatureFixtures.caseOf({ id: 1 })], root)
+  const read = await SignatureStore.readCases(fs, files)
+
+  // Assert
+  expect(read.cases.map((item) => item.id)).toEqual([1])
+  expect(read.archived).toEqual([])
+})
+
+test('readCases keeps the active case when an id is also in the archive', async () => {
+  // Arrange
+  const fs = SignatureStoreFixture.fresh()
+    .seed(files.cases + '/000.jsonl', SignatureStoreFixture.line(SignatureFixtures.caseOf({ id: 1, choice: 'active choice' })))
+    .seed(files.archive + '/000.jsonl', SignatureStoreFixture.line(SignatureFixtures.caseOf({ id: 1, choice: 'archived choice' })))
+
+  // Act
+  const read = await SignatureStore.readCases(fs, files)
+
+  // Assert
+  expect(read.cases[0]?.choice).toBe('active choice')
+  expect(read.archived).toEqual([])
+})
+
+test('writeCases empties a shard that no longer holds a case', async () => {
+  // Arrange
+  const fs = SignatureStoreFixture.fresh()
+  await SignatureStore.writeCases(fs, files, [SignatureFixtures.caseOf({ id: 1 }), SignatureFixtures.caseOf({ id: 300 })], [], root)
+
+  // Act
+  await SignatureStore.writeCases(fs, files, [SignatureFixtures.caseOf({ id: 1 })], [], root)
+  const read = await SignatureStore.readCases(fs, files)
+
+  // Assert
+  expect(fs.text(files.cases + '/001.jsonl')).toBe('')
+  expect(read.cases.map((item) => item.id)).toEqual([1])
+})
+
+test('writeCases keeps every write under the root', async () => {
+  // Arrange
+  const fs = SignatureStoreFixture.fresh()
+
+  // Act
+  await SignatureStore.writeCases(fs, files, [SignatureFixtures.caseOf({ id: 1 })], [SignatureFixtures.caseOf({ id: 2 })], root)
+
+  // Assert
+  expect(fs.writes.every((path) => path.startsWith(root + '/'))).toBe(true)
+})
+
+test('writeCases refuses to write without a real root', async () => {
+  // Arrange
+  const fs = SignatureStoreFixture.fresh()
+
+  // Act
+  const isDone = await SignatureStore.writeCases(fs, files, [SignatureFixtures.caseOf({ id: 1 })], [], '')
+
+  // Assert
+  expect(isDone).toBe(false)
+  expect(fs.writes).toEqual([])
+})
+
+test('writeCases drops the least recently seen cases above the 6 MiB budget', async () => {
+  // Arrange
+  const fs = SignatureStoreFixture.fresh()
+  const filler = 'x '.repeat(150)
+  const cases = Array.from({ length: 24000 }, (_, id) => SignatureFixtures.caseOf({ id, situation: filler, choice: filler, why: filler, lastSeen: id < 100 ? '2020-01-01' : '2026-01-01' }))
+
+  // Act
+  await SignatureStore.writeCases(fs, files, cases, [], root)
+  const read = await SignatureStore.readCases(fs, files)
+  const ids = new Set(read.cases.map((item) => item.id))
+
+  // Assert
+  expect(read.cases.length).toBeLessThan(24000)
+  expect(ids.has(0)).toBe(false)
+  expect(ids.has(23999)).toBe(true)
+})
+
+test('writeIndex writes the index under the root', async () => {
+  // Arrange
+  const fs = SignatureStoreFixture.fresh()
+
+  // Act
+  const isWritten = await SignatureStore.writeIndex(fs, files, TagIndex.empty(), root)
+
+  // Assert
+  expect(isWritten).toBe(true)
+  expect(fs.writes).toEqual([files.index])
+})
+
+test('writeIndex refuses to overwrite a newer file', async () => {
+  // Arrange
+  const fs = SignatureStoreFixture.fresh().seed(files.index, '{"version":2}')
+
+  // Assert
+  expect(await SignatureStore.writeIndex(fs, files, TagIndex.empty(), root)).toBe(false)
+  expect(fs.text(files.index)).toBe('{"version":2}')
+})
+
+test('readProfile of an absent file is the empty profile', async () => {
+  // Assert
+  expect((await SignatureStore.readProfile(SignatureStoreFixture.fresh(), files)).value).toEqual(Profile.empty())
+})
+
+test('readProfile flags a newer version', async () => {
+  // Assert
+  expect((await SignatureStore.readProfile(SignatureStoreFixture.fresh().seed(files.profile, '{"version":2}'), files)).isNewer).toBe(true)
+})
+
+test('writeProfile then readProfile gives back the profile', async () => {
+  // Arrange
+  const fs = SignatureStoreFixture.fresh()
+  const profile = { ...Profile.empty(), updatedAt: '2026-11-05', changedSince: 3 }
+
+  // Act
+  await SignatureStore.writeProfile(fs, files, profile, root)
+
+  // Assert
+  expect((await SignatureStore.readProfile(fs, files)).value).toEqual(profile)
+})
+
+test('writeProfile refuses to overwrite a newer file', async () => {
+  // Arrange
+  const fs = SignatureStoreFixture.fresh().seed(files.profile, '{"version":2}')
+
+  // Assert
+  expect(await SignatureStore.writeProfile(fs, files, Profile.empty(), root)).toBe(false)
+})
+
+test('readOverlay of an absent file is the empty overlay', async () => {
+  // Assert
+  expect((await SignatureStore.readOverlay(SignatureStoreFixture.fresh(), files)).value).toEqual(Vocabulary.parseOverlay(''))
+})
+
+test('writeOverlay then readOverlay gives back the overlay', async () => {
+  // Arrange
+  const fs = SignatureStoreFixture.fresh()
+  const overlay = { revision: 3, tags: { 'rate-limit': { facet: 'concept' as const, parent: 'security', aliases: ['throttling'], paths: [] } }, candidates: { idea: 2 } }
+
+  // Act
+  await SignatureStore.writeOverlay(fs, files, overlay, root)
+
+  // Assert
+  expect((await SignatureStore.readOverlay(fs, files)).value).toEqual(overlay)
+})
+
+test('writeOverlay refuses to overwrite a newer file', async () => {
+  // Arrange
+  const fs = SignatureStoreFixture.fresh().seed(files.vocabulary, '{"version":2}')
+
+  // Assert
+  expect(await SignatureStore.writeOverlay(fs, files, Vocabulary.parseOverlay(''), root)).toBe(false)
+})
+
+test('readOverlay flags a newer version', async () => {
+  // Assert
+  expect((await SignatureStore.readOverlay(SignatureStoreFixture.fresh().seed(files.vocabulary, '{"version":2}'), files)).isNewer).toBe(true)
+})
+
+test('readCursor of an absent file is undefined', async () => {
+  // Assert
+  expect(await SignatureStore.readCursor(SignatureStoreFixture.fresh(), files, 'r1')).toBe(undefined)
+})
+
+test('writeCursor then readCursor gives back the cursor in the history folder', async () => {
+  // Arrange
+  const fs = SignatureStoreFixture.fresh()
+  const cursor = { ...HistoryScanner.emptyCursor('/x/repo', 'repo', 'auto'), head: 'abc1234', done: ['abc1234'] }
+
+  // Act
+  await SignatureStore.writeCursor(fs, files, 'r1', cursor, root)
+
+  // Assert
+  expect(fs.writes).toEqual([root + '/history/r1.json'])
+  expect(await SignatureStore.readCursor(fs, files, 'r1')).toEqual(cursor)
+})
+
+test('writeCursor refuses to overwrite a newer file', async () => {
+  // Arrange
+  const fs = SignatureStoreFixture.fresh().seed(root + '/history/r1.json', '{"version":2}')
+
+  // Assert
+  expect(await SignatureStore.writeCursor(fs, files, 'r1', HistoryScanner.emptyCursor('/x', 'x', 'auto'), root)).toBe(false)
+})
+
+test('readCursor of a newer file is undefined', async () => {
+  // Assert
+  expect(await SignatureStore.readCursor(SignatureStoreFixture.fresh().seed(root + '/history/r1.json', '{"version":2,"root":"/x"}'), files, 'r1')).toBe(undefined)
+})
+
+test('writeCursor keeps an unsafe repository id inside the root', async () => {
+  // Arrange
+  const fs = SignatureStoreFixture.fresh()
+
+  // Act
+  await SignatureStore.writeCursor(fs, files, '../../evil', HistoryScanner.emptyCursor('/x', 'x', 'auto'), root)
+
+  // Assert
+  expect(fs.writes.every((path) => path.startsWith(root + '/history/'))).toBe(true)
+})
+
+test('journalFiles lists non empty journal files by month and name', async () => {
+  // Arrange
+  const fs = SignatureStoreFixture.fresh()
+    .seed(files.journal + '/2026-11/s1.jsonl', 'abc')
+    .seed(files.journal + '/2026-11/s1.2.jsonl', 'abcd')
+    .seed(files.journal + '/2026-10/s0.jsonl', 'a')
+
+  // Act
+  const found = await SignatureStore.journalFiles(fs, files)
+
+  // Assert
+  expect(found.map((item) => item.key)).toEqual(['2026-10/s0.jsonl', '2026-11/s1.2.jsonl', '2026-11/s1.jsonl'])
+  expect(found.map((item) => item.bytes)).toEqual([1, 4, 3])
+  expect(found[0]?.path).toBe(files.journal + '/2026-10/s0.jsonl')
+})
+
+test('journalFiles skips empty files, odd names and folders that are not months', async () => {
+  // Arrange
+  const fs = SignatureStoreFixture.fresh()
+    .seed(files.journal + '/2026-11/empty.jsonl', '')
+    .seed(files.journal + '/2026-11/notes.txt', 'abc')
+    .seed(files.journal + '/2026-11/bad name.jsonl', 'abc')
+    .seed(files.journal + '/junk/s.jsonl', 'abc')
+
+  // Assert
+  expect(await SignatureStore.journalFiles(fs, files)).toEqual([])
+})
+
+test('journalFiles of a bad root never touches the file system', async () => {
+  // Arrange
+  const fs = new MemoryFs()
+
+  // Act
+  for (const bad of SignatureStoreFixture.badRoots()) await SignatureStore.journalFiles(fs, SignaturePaths.files(bad))
+
+  // Assert
+  expect(fs.calls).toEqual([])
+})
+
+test('emptyFile writes an empty text to a file under the root', async () => {
+  // Arrange
+  const path = files.journal + '/2026-11/s1.jsonl'
+  const fs = SignatureStoreFixture.fresh().seed(path, 'abc')
+
+  // Act
+  const isDone = await SignatureStore.emptyFile(fs, files, path, root)
+
+  // Assert
+  expect(isDone).toBe(true)
+  expect(fs.text(path)).toBe('')
+})
+
+test('emptyFile refuses a path outside the root', async () => {
+  // Arrange
+  const fs = SignatureStoreFixture.fresh().seed('/r/other/x.jsonl', 'keep')
+
+  // Act
+  const isDone = await SignatureStore.emptyFile(fs, files, '/r/other/x.jsonl', root)
+
+  // Assert
+  expect(isDone).toBe(false)
+  expect(fs.text('/r/other/x.jsonl')).toBe('keep')
+})
+
+test('emptyFile refuses without a real root', async () => {
+  // Arrange
+  const path = files.index
+  const fs = SignatureStoreFixture.fresh().seed(path, 'abc')
+
+  // Assert
+  expect(await SignatureStore.emptyFile(fs, files, path, '')).toBe(false)
+  expect(fs.text(path)).toBe('abc')
+})
+
+test('quarantine writes the text to the same name with a corrupt suffix and the time', async () => {
+  // Arrange
+  const fs = SignatureStoreFixture.fresh()
+
+  // Act
+  const isDone = await SignatureStore.quarantine(fs, files, files.index, 'broken', 1234.9, root)
+
+  // Assert
+  expect(isDone).toBe(true)
+  expect(fs.text(files.index + '.corrupt-1234')).toBe('broken')
+})
+
+test('quarantine refuses a time that is not a number', async () => {
+  // Assert
+  expect(await SignatureStore.quarantine(SignatureStoreFixture.fresh(), files, files.index, 'x', Number.NaN, root)).toBe(false)
+})
+
+test('quarantine refuses a path outside the root', async () => {
+  // Arrange
+  const fs = SignatureStoreFixture.fresh()
+
+  // Act
+  const isDone = await SignatureStore.quarantine(fs, files, '/r/other/x.json', 'x', 5, root)
+
+  // Assert
+  expect(isDone).toBe(false)
+  expect(fs.writes).toEqual([])
+})
+
+class EraseFixture {
+  static lock(owner: string, expiresAt: number): string {
+    return JSON.stringify({ version: 1, owner, expiresAt }) + '\n'
+  }
+
+  static options(fs: MemoryFs, waits: number[], onWait: (count: number) => void = () => undefined) {
+    return {
+      owner: 'me',
+      now: () => 1_000_000,
+      wait: async (ms: number) => {
+        waits.push(ms)
+        onWait(waits.length)
+        void fs
+      }
+    }
+  }
+}
+
+test('erase with a lock option takes the lock and erases', async () => {
+  // Arrange
+  const fs = SignatureStoreFixture.filled()
+  const waits: number[] = []
+
+  // Act
+  const result = await SignatureStore.erase(fs, files, root, EraseFixture.options(fs, waits))
+
+  // Assert
+  expect(result.isLocked).toBe(false)
+  expect(result.emptied).toBe(7)
+  expect(result.isComplete).toBe(true)
+})
+
+test('erase with a lock option gives up after ten tries against a live lock of another owner', async () => {
+  // Arrange
+  const fs = SignatureStoreFixture.filled().seed(files.lock, EraseFixture.lock('rival', 9_999_999))
+  const waits: number[] = []
+
+  // Act
+  const result = await SignatureStore.erase(fs, files, root, EraseFixture.options(fs, waits))
+
+  // Assert
+  expect(result).toEqual({ emptied: 0, isComplete: false, isLocked: true })
+  expect(waits).toEqual(Array.from({ length: 9 }, () => 1000))
+  expect(fs.writes).toEqual([])
+})
+
+test('erase with a lock option goes ahead once the lock is freed on the third try', async () => {
+  // Arrange
+  const fs = SignatureStoreFixture.filled().seed(files.lock, EraseFixture.lock('rival', 9_999_999))
+  const waits: number[] = []
+
+  // Act
+  const result = await SignatureStore.erase(fs, files, root, EraseFixture.options(fs, waits, (count) => {
+    if (count === 2) fs.seed(files.lock, '')
+  }))
+
+  // Assert
+  expect(result.isLocked).toBe(false)
+  expect(result.emptied).toBeGreaterThan(0)
+  expect(waits.slice(0, 2)).toEqual([1000, 1000])
+})
+
+test('erase empties the lock file last', async () => {
+  // Arrange
+  const fs = SignatureStoreFixture.filled().seed(files.lock, EraseFixture.lock('me', 9_999_999))
+
+  // Act
+  await SignatureStore.erase(fs, files, root)
+
+  // Assert
+  expect(fs.writes[fs.writes.length - 1]).toBe(files.lock)
+  expect(fs.writes.indexOf(files.settings)).toBeLessThan(fs.writes.indexOf(files.lock))
+  expect(fs.text(files.lock)).toBe('')
+})
+
+test('erase with a lock option releases nothing and leaves the lock emptied at the end', async () => {
+  // Arrange
+  const fs = SignatureStoreFixture.filled()
+  const waits: number[] = []
+
+  // Act
+  await SignatureStore.erase(fs, files, root, EraseFixture.options(fs, waits))
+
+  // Assert
+  expect(fs.text(files.lock)).toBe('')
+  expect(fs.writes[fs.writes.length - 1]).toBe(files.lock)
+})
+
+test('listCursors gives the valid cursors sorted by file name', async () => {
+  // Arrange
+  const fs = SignatureStoreFixture.fresh()
+  await SignatureStore.writeCursor(fs, files, 'r2', HistoryScanner.emptyCursor('/x/two', 'two', 'auto'), root)
+  await SignatureStore.writeCursor(fs, files, 'r1', HistoryScanner.emptyCursor('/x/one', 'one', 'manual'), root)
+
+  // Act
+  const cursors = await SignatureStore.listCursors(fs, files)
+
+  // Assert
+  expect(cursors.map((cursor) => cursor.name)).toEqual(['one', 'two'])
+})
+
+test('listCursors skips newer, invalid and empty cursor files', async () => {
+  // Arrange
+  const fs = SignatureStoreFixture.fresh()
+    .seed(root + '/history/newer.json', '{"version":2,"root":"/x"}')
+    .seed(root + '/history/bad.json', 'garbage')
+    .seed(root + '/history/empty.json', '')
+    .seed(root + '/history/notes.txt', 'x')
+
+  // Assert
+  expect(await SignatureStore.listCursors(fs, files)).toEqual([])
+})
+
+test('listCursors of a missing history folder is empty', async () => {
+  // Assert
+  expect(await SignatureStore.listCursors(SignatureStoreFixture.fresh(), files)).toEqual([])
+})
+
+test('listCursors with a bad root never touches the file system', async () => {
+  // Arrange
+  const fs = new MemoryFs()
+
+  // Act
+  for (const bad of SignatureStoreFixture.badRoots()) await SignatureStore.listCursors(fs, SignaturePaths.files(bad))
+
+  // Assert
+  expect(fs.calls).toEqual([])
+})
+
+test('journalFiles gives the modification time of each file', async () => {
+  // Arrange
+  const path = files.journal + '/2026-11/s1.jsonl'
+  const fs = SignatureStoreFixture.fresh().seed(path, 'abc').touch(path, 424242)
+
+  // Act
+  const found = await SignatureStore.journalFiles(fs, files)
+
+  // Assert
+  expect(found[0]?.mtimeMs).toBe(424242)
+})
+
+test('journalFiles falls back to zero when the listing has no modification time', async () => {
+  // Arrange
+  const fs = SignatureStoreFixture.fresh().seed(files.journal + '/2026-11/s1.jsonl', 'abc')
+  const list = fs.list.bind(fs)
+  fs.list = async (path: string) => (await list(path)).map((entry) => ({ ...entry, mtimeMs: undefined as never }))
+
+  // Act
+  const found = await SignatureStore.journalFiles(fs, files)
+
+  // Assert
+  expect(found[0]?.mtimeMs).toBe(0)
 })

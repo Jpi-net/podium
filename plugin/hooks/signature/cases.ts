@@ -37,6 +37,15 @@ export class Cases {
   private static readonly WITHOUT = /(^|[^a-z0-9])(without)(?![a-z0-9])/g
   private static readonly POSITIVE = /(^|[^a-z0-9])(run(?:s|ning)?|writ(?:e|es|ing)|add(?:s|ing)?|requir(?:e|es|ing)|wait(?:s|ing)? for|execut(?:e|es|ing)|bother\w*)(?![a-z0-9])/g
   private static readonly TARGET = /(^|[^a-z0-9])((?:test|guard|hook|review|permission|check|lint|validation|security|pre-commit|coverage|typecheck|type check|verification|assert|eslint|pytest|vitest|mypy|husky|pipeline)\w*|(?:ci|specs?|qa|tsc|jest)(?![a-z0-9]))/g
+  private static readonly GRANT = /(^|[^a-z0-9])((?:grant|approv|auto-?approv|allow|accept)\w*)/g
+  private static readonly PERMISSION = /(^|[^a-z0-9])(permission\w*|full access|sudo|dangerous\w*|all tools|every tool|any tool|without (?:asking|confirmation|prompting)|bypass\w* permissions?)/g
+  private static readonly OPTIONAL = /(^|[^a-z0-9])(optional|acceptable|unnecessary|not needed|skippable|nice to have)(?![a-z0-9])/g
+  private static readonly AHEAD = /\bbefore\b.{0,40}?\b(?:finish\w*|pass\w*|complet\w*|green)/g
+  private static readonly RED = /\bred\b.{0,40}?\b(?:acceptable|fine|ok|okay|tolerable)(?![a-z0-9])/g
+  private static readonly GOVERN = 5
+  private static readonly MAX_CANDIDATES = 5
+  private static readonly MAX_ALIASES = 16
+  private static readonly ALIAS_LENGTH = 64
   private static readonly SINGLE_NEGATORS: ReadonlySet<string> = new Set(['never', 'dont', "don't", 'doesnt', 'jamais', 'ne'])
   private static readonly VERB_NEGATORS: ReadonlySet<string> = new Set(['do not', 'does not', 'must not', 'should not', 'refuses to', 'refused to'])
   private static readonly POSITIVE_NEGATORS: ReadonlySet<string> = new Set(['never', 'not', 'no', 'dont', "don't", 'doesnt', 'hardly', 'seldom', 'rarely', 'wont', "won't", 'cant', "can't", 'cannot', 'shouldnt', "shouldn't", 'isnt', "isn't", 'nobody', 'neither', 'nor'])
@@ -103,6 +112,7 @@ export class Cases {
     }
     if (Array.isArray(parsed.candidateTags)) {
       for (const raw of parsed.candidateTags) {
+        if (output.candidateTags.length >= Cases.MAX_CANDIDATES) break
         const candidate = Cases.candidate(raw, vocabulary)
         if (candidate && !output.candidateTags.some((c) => c.tag === candidate.tag)) output.candidateTags.push(candidate)
       }
@@ -225,8 +235,9 @@ export class Cases {
       ? raw.aliases
           .filter((a): a is string => typeof a === 'string')
           .map((a) => a.trim().toLowerCase())
+          .map((a) => a.slice(0, Cases.ALIAS_LENGTH))
           .filter((a) => a !== '')
-          .slice(0, 8)
+          .slice(0, Cases.MAX_ALIASES)
       : []
     return { tag, facet, parent, aliases }
   }
@@ -274,6 +285,7 @@ export class Cases {
       if (Cases.FLAGS.some((flag) => flag.test(flat))) return true
       if (Cases.DASH_N.test(flat) && flat.includes('commit')) return true
       if (flat.includes('push') && (flat.includes('--force') || Cases.DASH_F.test(flat))) return true
+      if (Cases.weakens(flat, window)) return true
       const targets = Cases.spans(flat, Cases.TARGET)
       if (targets.length === 0) return false
       const isNear = (word: Span) => targets.some((target) => Cases.gap(word, target) <= window)
@@ -379,6 +391,36 @@ export class Cases {
 
   private static hasTarget(text: string): boolean {
     return Cases.spans(Cases.flatten(text), Cases.TARGET).length > 0
+  }
+
+  private static weakens(flat: string, window: number): boolean {
+    const permissions = Cases.spans(flat, Cases.PERMISSION)
+    if (permissions.length > 0) {
+      const grants = Cases.spans(flat, Cases.GRANT)
+      if (grants.some((grant) => !Cases.isNegated(flat, grant[0], Cases.VERB_NEGATORS) && permissions.some((word) => Cases.gap(grant, word) <= window))) return true
+    }
+    const targets = Cases.spans(flat, Cases.TARGET)
+    if (targets.length === 0) return false
+    const optionals = Cases.spans(flat, Cases.OPTIONAL)
+    if (optionals.some((word) => !Cases.isGoverned(flat, word[0]) && targets.some((target) => Cases.gap(word, target) <= window))) return true
+    for (const pattern of [Cases.AHEAD, Cases.RED]) {
+      for (const match of flat.matchAll(pattern)) {
+        if (Cases.spans(match[0], Cases.TARGET).length > 0 && !Cases.isGoverned(flat, match.index ?? 0)) return true
+      }
+    }
+    return false
+  }
+
+  private static isGoverned(text: string, start: number): boolean {
+    const prefix = text.slice(Math.max(0, start - Cases.TAIL), start)
+    const cut = Math.max(prefix.lastIndexOf(','), prefix.lastIndexOf('.'), prefix.lastIndexOf(';'), prefix.lastIndexOf(':'), prefix.lastIndexOf('!'), prefix.lastIndexOf('?'))
+    const words = prefix.slice(cut + 1).split(/[^a-z0-9']+/).filter((word) => word !== '')
+    for (let i = Math.max(0, words.length - Cases.GOVERN); i < words.length; i += 1) {
+      const word = words[i] ?? ''
+      const width = Cases.SINGLE_NEGATORS.has(word) ? 1 : Cases.VERB_NEGATORS.has(`${word} ${words[i + 1] ?? ''}`) ? 2 : 0
+      if (width !== 0 && !Cases.DOUBLERS.has(words[i - 1] ?? '')) return true
+    }
+    return false
   }
 
   private static isForeign(text: string): boolean {

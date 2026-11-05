@@ -5,7 +5,7 @@ export class Journal {
   static readonly FLUSH_AT = 20
   static readonly ROTATE_BYTES = 512 * 1024
 
-  private static readonly KINDS: readonly string[] = ['prompt', 'question', 'plan', 'abort', 'agent', 'use']
+  private static readonly KINDS: readonly string[] = ['prompt', 'question', 'plan', 'abort', 'agent', 'use', 'turn']
 
   static push(buffer: readonly Signal[], signal: Signal): { buffer: Signal[], dropped: number } {
     const next = Array.isArray(buffer) ? [...buffer, signal] : [signal]

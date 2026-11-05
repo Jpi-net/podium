@@ -1,9 +1,12 @@
+import { HistoryScanner, type HistorySource } from './history'
 import { Journal } from './journal'
+import { Learner, type ModelAnswer, type ModelPort, type ModelRequest, type Progress, type Repository, type RunReport } from './learner'
 import { SignaturePaths, type SignatureFiles } from './paths'
+import { Profile, type ProfileData } from './profile'
 import { Redactor } from './redactor'
 import { SignatureSettings, type Consent, type Settings } from './settings'
 import { SignalExtractor, type PlanInput, type QuestionInput, type Signal, type SignalContext } from './signals'
-import { SignatureStore, type FsPort, type Sizes } from './store'
+import { SignatureStore, type FsPort, type Sizes, type StoreState } from './store'
 import { Vocabulary } from './vocabulary'
 
 export type GitPort = (argv: readonly string[], cwd: string) => Promise<{ exitCode: number, stdout: string }>
@@ -15,9 +18,23 @@ export type SignaturePorts = {
   env: (name: string) => string
   toast: (text: string) => void
   changed: (state: SignatureViewState) => void
+  model?: ModelPort
+  wait?: (ms: number) => Promise<void>
 }
 
 export type SignatureDraft = { sessions: boolean, history: boolean, pastSessions: boolean, background: boolean, apply: boolean }
+
+export type SignatureLearning = {
+  isRunning: boolean, step: string, done: number, total: number, lastRunAt: number, lastError: string, nextRunHint: string
+}
+
+export type SignatureCounts = { traits: number, confirmed: number, cases: number, newTraits: number }
+
+export type SignatureLens = { lens: string, strength: number, summary: string, blindSpot: string }
+
+export type SignatureReview = { id: string, statement: string, lens: string, confidence: number }
+
+export type SignatureRepository = { name: string, state: 'done' | 'learning' | 'pending' | 'excluded' | 'no-identity' }
 
 export type SignatureViewState = {
   consent: Consent
@@ -33,6 +50,12 @@ export type SignatureViewState = {
   confirmErase: boolean
   confirmUntil: number
   lastError: string
+  learning: SignatureLearning
+  counts: SignatureCounts
+  lenses: SignatureLens[]
+  review: SignatureReview[]
+  repositories: SignatureRepository[]
+  tokensToday: number
 }
 
 export type StartInput = { cwd: string, session: string, isInteractive: boolean }
@@ -55,8 +78,16 @@ export class Signature {
   private static readonly MAX_GLOB = 256
   private static readonly MAX_ERROR = 160
   private static readonly PRIVATE = '.podium-private'
-  private static readonly USAGE = 'Usage: /podium-stage signature [on|off|pause|resume|exclude <folder>|include <folder>|erase]'
+  private static readonly USAGE = 'Usage: /podium-stage signature [on|off|pause|resume|learn-now|rebuild|forget <trait id or #case>|exclude <folder>|include <folder>|erase]'
+  private static readonly ENABLED = 'Signature is on: it records your decisions from now on.'
   private static readonly NOT_READY = 'Signature is not ready yet.'
+  private static readonly BUSY = 'A learning run is in progress; try again in a moment.'
+  private static readonly MAX_TURN = 2000
+  private static readonly DUE_CHANGES = 10
+  private static readonly MAX_MANUAL = 10
+  private static readonly MAX_JOURNAL_FILES = 100
+  private static readonly MINUTE = 60_000
+  private static readonly URL = /^(?:[a-z][a-z0-9+.-]*:\/\/|[^/\\\s]+@[^:\s]+:)/i
 
   private static ports: SignaturePorts | undefined
   private static files: SignatureFiles | undefined
@@ -89,6 +120,20 @@ export class Signature {
   private static confirmAt = 0
   private static introAt = 0
   private static notNowAt = 0
+  private static lastActivityAt = 0
+  private static lastTurn = ''
+  private static learning: SignatureLearning = Signature.idle()
+  private static counts: SignatureCounts = { traits: 0, confirmed: 0, cases: 0, newTraits: 0 }
+  private static lenses: SignatureLens[] = []
+  private static review: SignatureReview[] = []
+  private static repositories: SignatureRepository[] = []
+  private static tokensToday = 0
+  private static profile: ProfileData = Profile.empty()
+  private static manual: Repository[] = []
+  private static unnamed = new Set<string>()
+  private static runs = 0
+  private static waiters: (() => void)[] = []
+  private static lineCounts = new Map<string, { bytes: number, lines: number }>()
 
   static empty(): SignatureViewState {
     return {
@@ -104,7 +149,13 @@ export class Signature {
       storage: { indexBytes: 0, casesBytes: 0, journalBytes: 0, emptyFiles: 0 },
       confirmErase: false,
       confirmUntil: 0,
-      lastError: ''
+      lastError: '',
+      learning: Signature.idle(),
+      counts: { traits: 0, confirmed: 0, cases: 0, newTraits: 0 },
+      lenses: [],
+      review: [],
+      repositories: [],
+      tokensToday: 0
     }
   }
 
@@ -145,8 +196,11 @@ export class Signature {
       Signature.dropped = read.dropped
       Signature.consent = read.value.consent
       Signature.draft = Signature.draftOf(read.value)
+      Signature.lastActivityAt = ports.now()
       if (Signature.consent === 'enabled') await Signature.prepare()
       await Signature.measure()
+      if (Signature.consent === 'enabled') await Signature.restoreManual()
+      if (Signature.consent === 'enabled' || Signature.consent === 'paused') await Signature.refresh()
     } catch (error) {
       Signature.fail(error)
     } finally {
@@ -171,6 +225,7 @@ export class Signature {
 
   static onPrompt(event: PromptEvent): void {
     try {
+      Signature.touch()
       if (!Signature.isCapturing() || !event) return
       if (event.isUserOrigin !== true || event.isMeta === true || event.isNotification === true) return
       if (typeof event.text === 'string' && event.text.trimStart().startsWith('!')) return
@@ -178,7 +233,14 @@ export class Signature {
       Signature.isAfterAbort = false
       const context = Signature.context()
       if (context === undefined) return
-      Signature.record([SignalExtractor.prompt(context, { text: event.text, command: event.command, args: event.args, isAfterAbort })])
+      const body = event.command === '' ? event.text : event.args
+      const signals: Signal[] = []
+      if (Signature.lastTurn !== '' && (isAfterAbort || SignalExtractor.isCorrection(body))) {
+        signals.push(SignalExtractor.turn(context, Signature.lastTurn))
+        Signature.lastTurn = ''
+      }
+      signals.push(SignalExtractor.prompt(context, { text: event.text, command: event.command, args: event.args, isAfterAbort }))
+      Signature.record(signals)
     } catch (error) {
       Signature.fail(error)
     }
@@ -206,9 +268,11 @@ export class Signature {
     }
   }
 
-  static onTurn(reason: string, agentId: string, turnId: string): void {
+  static onTurn(reason: string, agentId: string, turnId: string, text: string = ''): void {
     try {
+      Signature.touch()
       if (agentId !== '' && agentId !== undefined) return
+      if (Signature.isCapturing()) Signature.lastTurn = typeof text === 'string' ? text.slice(0, Signature.MAX_TURN) : ''
       if (Signature.isCapturing() && reason === 'aborted') {
         const context = Signature.context()
         if (context !== undefined) Signature.record([SignalExtractor.abort(context, turnId)])
@@ -218,6 +282,10 @@ export class Signature {
     } catch (error) {
       Signature.fail(error)
     }
+  }
+
+  static onTool(): void {
+    Signature.touch()
   }
 
   static onAgent(type: string, model: string): void {
@@ -271,7 +339,13 @@ export class Signature {
       storage: { ...Signature.storage },
       confirmErase: Signature.isConfirming(),
       confirmUntil: Signature.confirmAt > 0 ? Signature.confirmAt + Signature.CONFIRM_MS : 0,
-      lastError: Signature.lastError
+      lastError: Signature.lastError,
+      learning: { ...Signature.learning },
+      counts: { ...Signature.counts },
+      lenses: Signature.lenses.map((item) => ({ ...item })),
+      review: Signature.review.map((item) => ({ ...item })),
+      repositories: Signature.repositories.map((item) => ({ ...item })),
+      tokensToday: Signature.tokensToday
     }
   }
 
@@ -302,13 +376,23 @@ export class Signature {
       Signature.lastError = ''
       await Signature.prepare()
       await Signature.measure()
+      await Signature.refresh()
       Signature.emit()
       if (Signature.isExcluded) return `Signature is on, but it does not learn here: ${Signature.exclusionReason}.`
-      return 'Signature is on: it records your decisions from now on.'
+      return Signature.ENABLED
     } catch (error) {
       Signature.fail(error)
       return Signature.lastError
     }
+  }
+
+  private static async switchOn(): Promise<string> {
+    const text = await Signature.enable()
+    if (text !== Signature.ENABLED) return text
+    const learning = Signature.settings.learning
+    const budget = String(learning.tokensPerDay).replace(/\B(?=(\d{3})+(?!\d))/g, ',')
+    const clause = learning.background ? ` and learns from them in the background with your Claude plan (up to ${budget} tokens a day)` : ''
+    return `Signature is on: it records your decisions${clause}. Open /podium-stage signature to change it.`
   }
 
   static async notNow(): Promise<string> {
@@ -330,6 +414,7 @@ export class Signature {
     if ((Signature.consent as Consent) !== 'enabled') return text
     try {
       await Signature.prepare()
+      await Signature.refresh()
       Signature.emit()
       if (Signature.isExcluded) return `Signature is on again, but it does not learn here: ${Signature.exclusionReason}.`
     } catch (error) {
@@ -386,6 +471,7 @@ export class Signature {
     try {
       const refusal = Signature.refusal(true)
       if (refusal !== '') return refusal
+      if (Signature.learning.isRunning) return Signature.BUSY
       if (!Signature.isConfirming()) {
         Signature.confirmAt = Signature.now()
         Signature.emit()
@@ -394,16 +480,26 @@ export class Signature {
       Signature.confirmAt = 0
       Signature.isErasing = true
       Signature.consent = 'declined'
-      Signature.buffer = []
-      Signature.signals = 0
-      Signature.lost = 0
       try {
         if (Signature.running !== undefined) await Signature.running
         const ports = Signature.ports
         const files = Signature.files
         if (ports === undefined || files === undefined) return Signature.NOT_READY
-        const result = await SignatureStore.erase(ports.fs, files, Signature.realRoot)
+        const wait = ports.wait
+        const lock = {
+          owner: `${Signature.input.session === '' ? 'signature' : Signature.input.session}:erase`,
+          now: () => ports.now(),
+          wait: wait === undefined ? () => Promise.resolve() : wait
+        }
+        const result = await SignatureStore.erase(ports.fs, files, Signature.realRoot, lock)
+        if (result.isLocked) {
+          Signature.consent = Signature.settings.consent
+          Signature.emit()
+          return 'A learning run is in progress in another session; try again in a moment.'
+        }
         Signature.buffer = []
+        Signature.signals = 0
+        Signature.lost = 0
         Signature.settings = SignatureSettings.defaults()
         Signature.settings.consent = 'declined'
         Signature.dropped = []
@@ -413,6 +509,7 @@ export class Signature {
         Signature.lastError = ''
         Signature.isExcluded = false
         Signature.exclusionReason = ''
+        Signature.resetLearning()
         await Signature.measure()
         Signature.emit()
         if (!result.isComplete) return `Signature emptied ${result.emptied} ${result.emptied === 1 ? 'file' : 'files'}; some could not be reached.`
@@ -435,7 +532,7 @@ export class Signature {
       const rest = space < 0 ? '' : text.slice(space).trim()
       switch (word) {
         case 'on':
-          return await Signature.enable()
+          return await Signature.switchOn()
         case 'off':
           return await Signature.decline()
         case 'pause':
@@ -444,6 +541,14 @@ export class Signature {
           return await Signature.resume()
         case 'erase':
           return await Signature.erase()
+        case 'learn-now':
+          return await Signature.learnNow()
+        case 'rebuild':
+          return await Signature.rebuild()
+        case 'learn':
+          return await Signature.learn(rest)
+        case 'forget':
+          return await Signature.forget(rest)
         case 'exclude':
           return rest === '' ? Signature.USAGE : await Signature.exclude(rest)
         case 'include':
@@ -466,6 +571,483 @@ export class Signature {
     }
   }
 
+  static modelRequest(request: ModelRequest): { model: string, system: { text: string, cache?: true }[], prompt: string, maxTokens: number, timeoutMs: number } {
+    return {
+      model: request.model,
+      system: request.system.map((block) => (block.cache ? { text: block.text, cache: true as const } : { text: block.text })),
+      prompt: request.prompt,
+      maxTokens: request.maxTokens,
+      timeoutMs: request.timeoutMs
+    }
+  }
+
+  static modelAnswer(result: unknown): ModelAnswer {
+    const invalid: ModelAnswer = { isAnswered: false, text: '', reason: 'invalid', inputTokens: 0, outputTokens: 0 }
+    if (typeof result !== 'object' || result === null) return invalid
+    const raw = result as Record<string, unknown>
+    const usage = typeof raw.usage === 'object' && raw.usage !== null ? raw.usage as Record<string, unknown> : {}
+    const count = (value: unknown): number => (typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0)
+    const inputTokens = count(usage.input_tokens) + count(usage.cache_creation_input_tokens) + count(usage.cache_read_input_tokens)
+    const outputTokens = count(usage.output_tokens)
+    if (raw.isAnswered === true) {
+      return { isAnswered: true, text: typeof raw.text === 'string' ? raw.text : '', reason: '', inputTokens, outputTokens }
+    }
+    if (raw.isAnswered === false) {
+      return { isAnswered: false, text: '', reason: typeof raw.reason === 'string' && raw.reason !== '' ? raw.reason : 'invalid', inputTokens, outputTokens }
+    }
+    return invalid
+  }
+
+  static tick(now: number): Promise<void> {
+    try {
+      return Signature.sync().then(() => Signature.maybeLearn(now)).catch(() => undefined)
+    } catch {
+      return Promise.resolve()
+    }
+  }
+
+  private static async sync(): Promise<boolean> {
+    if (Signature.isErasing || Signature.ports === undefined || Signature.files === undefined) return false
+    const fresh = await Signature.reload()
+    if (fresh !== undefined && fresh.consent === 'enabled') return true
+    if (Signature.buffer.length > 0) {
+      Signature.buffer = []
+      Signature.emit()
+    }
+    return false
+  }
+
+  static whenIdle(): Promise<void> {
+    if (!Signature.learning.isRunning) return Promise.resolve()
+    return new Promise<void>((resolve) => {
+      Signature.waiters.push(resolve)
+    })
+  }
+
+  static async learnNow(): Promise<string> {
+    return Signature.begin(true, false, [], 'Signature is learning now. Progress shows in the Signature tab.')
+  }
+
+  static async rebuild(): Promise<string> {
+    return Signature.begin(true, true, [], 'Signature is rebuilding its index and profile.')
+  }
+
+  static async learn(path: string): Promise<string> {
+    try {
+      const text = typeof path === 'string' ? path.trim() : ''
+      if (text === '') return 'Usage: /podium-stage learn <path to a local repository>'
+      const refusal = Signature.runRefusal()
+      if (refusal !== '') return refusal
+      if (Signature.URL.test(text)) return 'Clone the repository first, then pass its folder.'
+      const repository = await Signature.repositoryAt(text)
+      if (typeof repository === 'string') return repository
+      Signature.manual = [...Signature.manual.filter((item) => item.id !== repository.id), repository]
+      return await Signature.begin(true, false, [], `Signature is learning from ${repository.name}. Progress shows in the Signature tab.`)
+    } catch (error) {
+      Signature.fail(error)
+      return Signature.lastError
+    }
+  }
+
+  static async forget(target: string): Promise<string> {
+    return Signature.decide(target, 'reject')
+  }
+
+  static async keep(id: string): Promise<string> {
+    return Signature.decide(id, 'confirm')
+  }
+
+  private static idle(): SignatureLearning {
+    return { isRunning: false, step: '', done: 0, total: 0, lastRunAt: 0, lastError: '', nextRunHint: '' }
+  }
+
+  private static touch(): void {
+    if (Signature.ports !== undefined) Signature.lastActivityAt = Signature.now()
+  }
+
+  private static resetLearning(): void {
+    Signature.learning = Signature.idle()
+    Signature.counts = { traits: 0, confirmed: 0, cases: 0, newTraits: 0 }
+    Signature.lenses = []
+    Signature.review = []
+    Signature.repositories = []
+    Signature.tokensToday = 0
+    Signature.profile = Profile.empty()
+    Signature.unnamed = new Set<string>()
+  }
+
+  private static day(now: number): string {
+    const date = new Date(now)
+    return Number.isNaN(date.getTime()) ? '1970-01-01' : date.toISOString().slice(0, 10)
+  }
+
+  private static runRefusal(): string {
+    const refusal = Signature.refusal()
+    if (refusal !== '') return refusal
+    if (Signature.ports === undefined || Signature.ports.model === undefined) return 'Learning is not available in this session.'
+    if (Signature.consent !== 'enabled') return 'Signature is not on.'
+    if (Signature.isExcluded) return `Not learning here: ${Signature.exclusionReason}.`
+    if (Signature.isOff) return Signature.lastError
+    if (Signature.isErasing) return 'Signature is erasing its data.'
+    if (Signature.learning.isRunning) return 'A learning run is already in progress.'
+    if (Signature.realRoot === '') return 'Signature cannot write to its folder.'
+    return ''
+  }
+
+  private static async begin(isForced: boolean, isRebuild: boolean, extra: readonly Repository[], message: string): Promise<string> {
+    try {
+      const refusal = Signature.runRefusal()
+      if (refusal !== '') return refusal
+      Signature.learning = { ...Signature.learning, isRunning: true, step: 'starting', done: 0, total: 0 }
+      Signature.emit()
+      Signature.launch(isForced, isRebuild, extra).catch(() => undefined)
+      return message
+    } catch (error) {
+      Signature.learning = { ...Signature.learning, isRunning: false, step: '' }
+      Signature.fail(error)
+      return Signature.lastError
+    }
+  }
+
+  private static async launch(isForced: boolean, isRebuild: boolean, extra: readonly Repository[]): Promise<void> {
+    let report: RunReport | undefined
+    try {
+      await Signature.request(true)
+      await Signature.restoreManual()
+      const fresh = await Signature.reload()
+      const ports = Signature.ports
+      const files = Signature.files
+      const base = Signature.base
+      if (fresh !== undefined && fresh.consent === 'enabled' && ports !== undefined && files !== undefined && base !== undefined && ports.model !== undefined) {
+        const wait = ports.wait
+        Signature.runs += 1
+        report = await Learner.run(
+          {
+            fs: ports.fs,
+            git: ports.git,
+            model: Signature.guarded(),
+            now: () => ports.now(),
+            wait: wait === undefined ? () => Promise.resolve() : wait
+          },
+          {
+            files,
+            realRoot: Signature.realRoot,
+            settings: Signature.copy(fresh),
+            owner: `${Signature.input.session === '' ? 'signature' : Signature.input.session}:${Signature.startedAt}:${Signature.runs}`,
+            home: Signature.home,
+            project: base.project,
+            projectId: base.projectId,
+            stack: base.stack[0] ?? '',
+            repositories: [...Signature.repositoryList(), ...extra.filter((item) => !Signature.repositoryList().some((known) => known.id === item.id))],
+            isForced,
+            isRebuild,
+            liveKeys: Signature.liveKeys()
+          },
+          (value: Progress) => {
+            Signature.learning = { ...Signature.learning, step: value.step, done: value.done, total: value.total }
+            Signature.emit()
+          }
+        )
+      }
+    } catch (error) {
+      Signature.learning = { ...Signature.learning, lastError: Signature.describe(error) }
+    }
+    await Signature.settle(report)
+  }
+
+  private static liveKeys(): string[] {
+    const files = Signature.files
+    if (files === undefined) return []
+    const prefix = `${files.root}/journal/`
+    const keys: string[] = []
+    for (let part = 0; part <= Signature.part; part += 1) {
+      const path = SignaturePaths.journalFile(files.root, Signature.startedAt, Signature.input.session, part)
+      if (path.startsWith(prefix)) keys.push(path.slice(prefix.length))
+    }
+    return keys
+  }
+
+  private static async reload(): Promise<Settings | undefined> {
+    try {
+      const ports = Signature.ports
+      const files = Signature.files
+      if (ports === undefined || files === undefined) return undefined
+      const read = await SignatureStore.readSettings(ports.fs, files)
+      if (read.isNewer) return undefined
+      const wasConsent = Signature.consent
+      Signature.settings = read.value
+      Signature.consent = read.value.consent
+      if (wasConsent !== Signature.consent) Signature.emit()
+      return read.value
+    } catch {
+      return undefined
+    }
+  }
+
+  private static async restoreManual(): Promise<void> {
+    try {
+      const ports = Signature.ports
+      const files = Signature.files
+      if (ports === undefined || files === undefined || !Signature.input.isInteractive) return
+      const cursors = await SignatureStore.listCursors(ports.fs, files)
+      let checked = 0
+      for (const cursor of cursors) {
+        if (cursor.source !== 'manual' || cursor.isComplete || checked >= Signature.MAX_MANUAL) continue
+        checked += 1
+        const repository = await Signature.repositoryAt(cursor.root)
+        if (typeof repository === 'string') continue
+        Signature.manual = [...Signature.manual.filter((item) => item.id !== repository.id), repository]
+      }
+    } catch {
+      return
+    }
+  }
+
+  private static guarded(): ModelPort {
+    return async (request) => {
+      const stopped: ModelAnswer = { isAnswered: false, text: '', reason: 'stopped', inputTokens: 0, outputTokens: 0 }
+      const model = Signature.ports === undefined ? undefined : Signature.ports.model
+      if (model === undefined || Signature.consent !== 'enabled' || Signature.isErasing) return stopped
+      const fresh = await Signature.reload()
+      if (fresh === undefined || fresh.consent !== 'enabled' || Signature.isErasing) return stopped
+      return model(request)
+    }
+  }
+
+  private static async settle(report: RunReport | undefined): Promise<void> {
+    try {
+      const at = Signature.now()
+      const lastError = report === undefined ? Signature.learning.lastError : report.isOk || report.note === 'locked' ? '' : report.note
+      Signature.learning = { ...Signature.learning, isRunning: false, step: '', done: 0, total: 0, lastRunAt: at, lastError }
+      if (report !== undefined) Signature.markUnnamed(report.note)
+      await Signature.refresh()
+      const learned = report === undefined ? 0 : report.newTraits + report.added
+      if (learned > 0 && Signature.settings.notify && Signature.ports !== undefined) {
+        Signature.ports.toast(`Signature learned ${learned} new ${learned === 1 ? 'thing' : 'things'} about how you work.`)
+      }
+    } catch {
+      Signature.learning = { ...Signature.learning, isRunning: false, step: '' }
+    }
+    Signature.emit()
+    const waiting = Signature.waiters
+    Signature.waiters = []
+    for (const resolve of waiting) resolve()
+  }
+
+  private static markUnnamed(note: string): void {
+    for (const repository of Signature.repositoryList()) {
+      if (note.includes('no-identity:' + HistoryScanner.repoName(repository.name))) Signature.unnamed.add(repository.id)
+    }
+  }
+
+  private static describe(error: unknown): string {
+    try {
+      const raw = error instanceof Error ? error.message : String(error)
+      return Redactor.clean(raw, Signature.MAX_ERROR, Signature.home)
+    } catch {
+      return 'unexpected error'
+    }
+  }
+
+  private static repositoryList(): Repository[] {
+    const list: Repository[] = []
+    const location = Signature.location
+    if (Signature.settings.capture.history && location !== undefined && location.root !== '' && Signature.base !== undefined) {
+      list.push({ root: location.root, name: HistoryScanner.repoName(location.root), id: Signature.base.projectId, source: 'auto' })
+    }
+    for (const item of Signature.manual) {
+      if (!list.some((known) => known.id === item.id)) list.push(item)
+    }
+    return list
+  }
+
+  private static async repositoryAt(text: string): Promise<Repository | string> {
+    const ports = Signature.ports
+    if (ports === undefined) return Signature.NOT_READY
+    const expanded = text === '~' || text.startsWith('~/') || text.startsWith('~\\') ? Signature.home + text.slice(1) : text
+    const absolute = SignaturePaths.isAbsolute(expanded) ? expanded : Signature.input.cwd + '/' + expanded
+    const path = SignaturePaths.normalize(absolute)
+    if (path === '' || !SignaturePaths.isAbsolute(path) || /[\n\r\0]/.test(path)) return 'That path is not a usable folder.'
+    const info = await ports.fs.stat(path)
+    if (info === undefined || info.kind !== 'dir' || typeof info.realPath !== 'string' || info.realPath === '') return 'That path is not a folder.'
+    const real = SignaturePaths.normalize(info.realPath)
+    if (!SignaturePaths.isAbsolute(real) || /[\n\r\0]/.test(real)) return 'That path is not a usable folder.'
+    const top = (await Signature.git(['-C', real, 'rev-parse', '--show-toplevel'], real)).split('\n')[0]?.trim() ?? ''
+    if (top === '' || !SignaturePaths.isAbsolute(SignaturePaths.normalize(top)) || /[\n\r\0]/.test(top)) return 'That folder is not a git repository.'
+    if (SignatureSettings.isExcluded(Signature.settings, top, Signature.home) || SignatureSettings.isExcluded(Signature.settings, real, Signature.home)) {
+      return 'That folder is excluded from Signature.'
+    }
+    if (await ports.fs.exists(top + '/' + Signature.PRIVATE)) return `That folder has a ${Signature.PRIVATE} file.`
+    const remote = (await Signature.git(['-C', top, 'config', '--get', 'remote.origin.url'], top)).split('\n')[0]?.trim() ?? ''
+    const source: HistorySource = 'manual'
+    return { root: top, name: HistoryScanner.repoName(top), id: SignalExtractor.projectId(remote !== '' ? remote : top), source }
+  }
+
+  private static async refresh(): Promise<void> {
+    try {
+      const ports = Signature.ports
+      const files = Signature.files
+      if (ports === undefined || files === undefined || Signature.isBlocked) return
+      const state = await SignatureStore.readState(ports.fs, files)
+      const profile = await SignatureStore.readProfile(ports.fs, files)
+      const set = await SignatureStore.readCases(ports.fs, files)
+      const now = Signature.now()
+      if (!state.isNewer) {
+        const value = state.value
+        Signature.tokensToday = value.day === Signature.day(now) ? value.tokensToday : 0
+        const last = value.runs[value.runs.length - 1]
+        Signature.learning = {
+          ...Signature.learning,
+          lastRunAt: last === undefined ? Signature.learning.lastRunAt : last.at,
+          lastError: Signature.learning.isRunning ? '' : (value.lastError === 'model: stopped' ? '' : value.lastError !== '' ? value.lastError : Signature.learning.lastError)
+        }
+      }
+      if (!profile.isNewer) {
+        Signature.profile = profile.value
+        const live = profile.value.traits.filter((trait) => trait.status === 'observed' || trait.status === 'confirmed')
+        Signature.counts = {
+          traits: live.length,
+          confirmed: live.filter((trait) => trait.status === 'confirmed').length,
+          cases: set.cases.length,
+          newTraits: live.filter((trait) => trait.isNew && trait.status === 'observed').length
+        }
+        Signature.lenses = Profile.lenses(profile.value).map((item) => ({ ...item }))
+        Signature.review = Profile.review(profile.value).map((trait) => ({ id: trait.id, statement: trait.statement, lens: trait.lens, confidence: trait.confidence }))
+      }
+      Signature.learning = { ...Signature.learning, nextRunHint: Signature.settings.learning.background ? 'when idle' : 'on request' }
+      Signature.repositories = await Signature.statesOf()
+    } catch {
+      return
+    }
+  }
+
+  private static async statesOf(): Promise<SignatureRepository[]> {
+    const ports = Signature.ports
+    const files = Signature.files
+    if (ports === undefined || files === undefined) return []
+    const list: SignatureRepository[] = []
+    for (const repository of Signature.repositoryList()) {
+      let state: SignatureRepository['state'] = 'pending'
+      if (Signature.unnamed.has(repository.id)) {
+        state = 'no-identity'
+      } else {
+        const cursor = await SignatureStore.readCursor(ports.fs, files, repository.id)
+        if (cursor !== undefined && cursor.isComplete) state = 'done'
+        else if (Signature.learning.isRunning) state = 'learning'
+      }
+      list.push({ name: repository.name, state })
+    }
+    return list
+  }
+
+  private static async maybeLearn(now: number): Promise<void> {
+    const ports = Signature.ports
+    const files = Signature.files
+    if (ports === undefined || files === undefined || Signature.runRefusal() !== '') return
+    if (!Signature.settings.learning.background) return
+    if (now - Signature.lastActivityAt < Signature.settings.learning.idleMinutes * Signature.MINUTE) return
+    const fresh = await Signature.reload()
+    if (fresh === undefined || fresh.consent !== 'enabled' || !fresh.learning.background) return
+    const read = await SignatureStore.readState(ports.fs, files)
+    if (read.isNewer) return
+    const state = read.value
+    const settings = Signature.settings
+    if (!Learner.isDue(state, settings, now, Number.MAX_SAFE_INTEGER, false, false)) return
+    const hasHistory = Signature.repositories.some((item) => item.state === 'pending')
+    const hasWork = hasHistory || Profile.isDue(Signature.profile, now, false)
+    if (!hasWork) {
+      const pending = await Signature.pending(state)
+      if (!Learner.isDue(state, settings, now, pending, false, false)) return
+    }
+    await Signature.begin(false, false, [], '')
+  }
+
+  private static async pending(state: StoreState): Promise<number> {
+    const ports = Signature.ports
+    const files = Signature.files
+    if (ports === undefined || files === undefined) return 0
+    const listed = (await SignatureStore.journalFiles(ports.fs, files)).slice(0, Signature.MAX_JOURNAL_FILES)
+    const known = new Map<string, { bytes: number, lines: number }>()
+    const counts = new Map<string, number>()
+    for (const file of listed) {
+      const cached = Signature.lineCounts.get(file.key)
+      let lines = cached !== undefined && cached.bytes === file.bytes ? cached.lines : -1
+      if (lines < 0) {
+        const text = await SignatureStore.text(ports.fs, file.path)
+        lines = text.split('\n').filter((line) => line.trim() !== '').length
+      }
+      known.set(file.key, { bytes: file.bytes, lines })
+      counts.set(file.key, lines)
+    }
+    Signature.lineCounts = known
+    return Signature.buffer.length + Learner.pending(state, listed, counts)
+  }
+
+  private static async decide(target: string, action: 'confirm' | 'reject'): Promise<string> {
+    try {
+      const refusal = Signature.refusal()
+      if (refusal !== '') return refusal
+      if (Signature.learning.isRunning) return Signature.BUSY
+      const text = typeof target === 'string' ? target.trim() : ''
+      const isCase = text.startsWith('#')
+      if (isCase && action === 'confirm') return 'Cases are rejected by number only.'
+      const id = isCase ? Number(text.slice(1)) : -1
+      if (isCase ? !Number.isInteger(id) || id < 0 : !Profile.isId(text)) return 'Give a trait id or #<case number>.'
+      const ports = Signature.ports
+      const files = Signature.files
+      if (ports === undefined || files === undefined) return Signature.NOT_READY
+      const owner = (Signature.input.session === '' ? 'signature' : Signature.input.session) + ':edit'
+      const wait = ports.wait
+      const isTaken = await SignatureStore.takeLock(ports.fs, files, owner, ports.now(), Signature.realRoot, wait === undefined ? () => Promise.resolve() : wait)
+      if (!isTaken) return Signature.BUSY
+      try {
+        const today = Signature.day(ports.now())
+        const message = isCase ? await Signature.rejectCase(id, today) : await Signature.decideTrait(text, action, today)
+        await Signature.refresh()
+        Signature.emit()
+        return message
+      } finally {
+        await SignatureStore.releaseLock(ports.fs, files, owner, Signature.realRoot).catch(() => undefined)
+      }
+    } catch (error) {
+      Signature.fail(error)
+      return Signature.lastError
+    }
+  }
+
+  private static async rejectCase(id: number, today: string): Promise<string> {
+    const ports = Signature.ports
+    const files = Signature.files
+    if (ports === undefined || files === undefined) return Signature.NOT_READY
+    const set = await SignatureStore.readCases(ports.fs, files)
+    const hit = set.cases.some((item) => item.id === id) || set.archived.some((item) => item.id === id)
+    if (!hit) return `There is no case #${id}.`
+    const mark = <T extends { id: number }>(list: readonly T[]): T[] => list.map((item) => (item.id === id ? { ...item, status: 'rejected' as const, statusAt: today } : item))
+    const isWritten = await SignatureStore.writeCases(ports.fs, files, mark(set.cases), mark(set.archived), Signature.realRoot)
+    if (!isWritten) return 'Signature could not write its cases.'
+    const profile = await SignatureStore.readProfile(ports.fs, files)
+    if (!profile.isNewer) await SignatureStore.writeProfile(ports.fs, files, Signature.raised(profile.value), Signature.realRoot)
+    return `Case #${id} rejected.`
+  }
+
+  private static raised(profile: ProfileData): ProfileData {
+    return { ...profile, changedSince: Math.max(profile.changedSince, Signature.DUE_CHANGES) }
+  }
+
+  private static async decideTrait(id: string, action: 'confirm' | 'reject', today: string): Promise<string> {
+    const ports = Signature.ports
+    const files = Signature.files
+    if (ports === undefined || files === undefined) return Signature.NOT_READY
+    const read = await SignatureStore.readProfile(ports.fs, files)
+    if (read.isNewer) return 'Signature will not touch a profile written by a newer Podium.'
+    if (!read.value.traits.some((trait) => trait.id === id)) return `There is no trait ${id}.`
+    const decided = action === 'confirm' ? Profile.confirm(read.value, id, today) : Profile.reject(read.value, id, today)
+    const next = Signature.raised(decided)
+    const isWritten = await SignatureStore.writeProfile(ports.fs, files, next, Signature.realRoot)
+    if (!isWritten) return 'Signature could not write its profile.'
+    return action === 'confirm' ? `Trait ${id} kept.` : `Trait ${id} rejected.`
+  }
+
   private static reset(): void {
     Signature.ports = undefined
     Signature.files = undefined
@@ -481,6 +1063,10 @@ export class Signature {
     Signature.realRoot = ''
     Signature.isErasing = false
     Signature.isMeasureWanted = true
+    Signature.lastActivityAt = 0
+    Signature.lastTurn = ''
+    Signature.manual = []
+    Signature.resetLearning()
     Signature.dropped = []
     Signature.storage = { indexBytes: 0, casesBytes: 0, journalBytes: 0, emptyFiles: 0 }
     Signature.consent = 'undecided'
@@ -583,6 +1169,7 @@ export class Signature {
       if (refusal !== '') return refusal
       const next = Signature.copy(Signature.settings)
       next.consent = consent
+      if (consent === 'paused') await Signature.request(false)
       if (!await Signature.save(next)) return 'Signature could not write its settings.'
       Signature.consent = consent
       if (consent === 'enabled') {
@@ -657,7 +1244,9 @@ export class Signature {
     const ports = Signature.ports
     const files = Signature.files
     if (ports === undefined || files === undefined || Signature.isBlocked || Signature.isErasing || Signature.buffer.length === 0) return
+    if (!await Signature.sync()) return
     const batch = [...Signature.buffer]
+    if (batch.length === 0) return
     const result = await SignatureStore.flushJournal(ports.fs, files.root, Signature.input.session, Signature.startedAt, batch, Signature.part, Signature.realRoot)
     if (result.written === 0) {
       Signature.lastError = 'Signature stopped: its folder is not writable.'

@@ -62,7 +62,7 @@ It stores its own settings (fps, notifications, accessory, time per work item) i
 
 **It writes nothing else, unless you enable Signature**: then it writes only under `~/.claude/podium/` (or `$CLAUDE_CONFIG_DIR/podium/`): your settings choices and the journal of recorded signals (see [Signature](#signature-opt-in)). The plugin cannot delete files, so `erase` empties them; you can delete the folder by hand.
 
-**Nothing leaves the machine**: no network access, no telemetry. Podium has no server. If you later enable learning, selected excerpts are sent to Claude through your own session, as the opt-in screen says; nothing goes anywhere else.
+**Nothing leaves the machine**: no network access, no telemetry. Podium has no server. If you enable learning, masked excerpts of your own sessions and of commits authored with your email address are sent to Claude through your own session and plan, as the opt-in screen says and [Signature](#what-is-sent-to-claude) lists; nothing goes anywhere else.
 
 **Events it hooks.** The panel only observes Claude Code: it never changes, blocks or answers anything but its own two commands.
 
@@ -160,17 +160,16 @@ The scene reacts to the work: rain on the office window under a grey sky while v
 
 ## Signature (opt-in)
 
-Signature lets Podium learn how you decide, build and care about security, so that it can bring that to every project. It is **off by default**: until you choose, nothing is recorded.
+Signature lets Podium learn how you decide, build and care about security, from your sessions and from your own commits. It is **off by default**: until you choose, nothing is recorded.
 
 While you have not chosen, a new interactive session introduces it at most once every 24 hours: if the panel is open it switches to the **Signature** tab (key `6`) and shows the opt-in screen, otherwise a toast says "Podium can learn how you work. Open /podium-stage signature to choose." You can open the tab yourself at any time with `/podium-stage signature`. The screen says what is recorded, what never is, where it is stored and what is sent to Claude, and gives one switch per capability:
 
 - learn from my sessions;
 - read the history of the repositories I open;
-- read my past Claude Code sessions once;
 - learn in the background when idle;
 - bring my profile into every session.
 
-Choose **Enable**, **Not now** (it does not introduce itself again for 7 days) or **Never ask** (`/podium-stage signature on` changes your mind later). In this release the panel records your sessions and shows what it holds; learning from the history and applying a profile arrive in later releases and use the switches you chose here.
+Choose **Enable**, **Not now** (it does not introduce itself again for 7 days) or **Never ask** (`/podium-stage signature on` changes your mind later). The switch for bringing your profile into every session is saved but has no effect yet.
 
 ### What is recorded
 
@@ -180,6 +179,7 @@ From interactive sessions in a folder that is not excluded, once you enable it:
 - your answers to Claude's questions: the question and its options, the one you chose or your own words, masked;
 - plans you accept or refuse: an excerpt of the plan (first 1500 characters, masked), your feedback (masked) and whether you edited it;
 - interruptions;
+- Claude's last reply, masked and cut to 600 characters, only when your next prompt corrects it or follows an interruption;
 - which subagent types and models are used;
 - the project the session belongs to: its folder name, a short hash of its git remote (not the remote itself) and up to three main stack tags.
 
@@ -187,11 +187,38 @@ Masking replaces secrets before anything is written: private keys, tokens and AP
 
 ### What is never recorded
 
-File contents, tool outputs, diffs, shell command lines (only the slash command name is kept), images and attachments, the prompts of subagents, and Claude's own answers (only the questions it asks you and the plan you accept or refuse are kept, masked). Sessions started without a terminal conversation (`claude -p`, SDK runs) are never recorded. Nothing is recorded while Signature is paused or declined.
+File contents, tool outputs, diffs, shell command lines (only the slash command name is kept), images and attachments, the prompts of subagents, and Claude's own replies. The exceptions, all masked: the questions it asks you, the plans you accept or refuse, and its last reply, cut to 600 characters, only when your next prompt corrects it or follows an interruption. Sessions started without a terminal conversation (`claude -p`, SDK runs) are never recorded. Nothing is recorded while Signature is paused or declined.
+
+### How it learns
+
+Recording is only the first step. Podium then asks Claude to summarise what it recorded into a profile: traits grouped by lens (security, architecture, robustness, testing, git, developer experience, product), each with a confidence, plus the concrete cases behind them.
+
+- **When:** with *learn in the background when idle* on (the default switch), after about 10 minutes without activity, when there is enough new material (20 or more new signals, or a repository whose history is not read yet). `/podium-stage signature learn-now` runs it at once.
+- **Through your own session:** the requests go to Claude through your Claude Code session and your plan, with the model `sonnet` by default. Podium has no server and sends nothing anywhere else.
+- **Budget:** by default at most 2 background runs and 300,000 tokens a day, and at most 120,000 tokens in one run. After a failed run it waits 1 hour, then 4, then 24 before trying again in the background. `learn-now` and `rebuild` skip the runs-per-day limit and the wait, but not the daily token limit. The `learning` block of `settings.json` (`runsPerDay`, `tokensPerDay`, `idleMinutes`, `model`) holds these values.
+- **Notification:** when a run finds something new and notifications are on (`/podium-stage notify on`), a toast says "Signature learned N new things about how you work."
+- **Stopping:** `pause`, `off`, `Never ask` and `erase` stop learning, in every Claude Code window: each run re-reads your choice before every request, so nothing more is sent. `erase` is refused while a run is in progress ("A learning run is in progress; try again in a moment."); try again when it ends.
+
+### What is sent to Claude
+
+Only while learning runs, only masked, and nothing beyond this list:
+
+- **Session episodes:** the masked signals recorded in your journal (prompts, answers to questions, plans, interruptions), grouped into short episodes.
+- **Excerpts of commits authored with your email address** (when you chose *read the history of the repositories I open*): for each selected commit, its subject and message body (masked, shortened), up to six changed file paths with line counts, and a masked, shortened excerpt of the diff. Only commits whose author email matches one of your identities are read (anyone can author a commit with your address, so this is a match on the email, not proof it is you). The identities come from `identities` in `settings.json`, or else from `git config user.email` of the repository. Without an identity the repository is skipped and the tab shows "(no identity)". Merge commits are not read.
+- **Left out of commits:** files that look like keys, credentials or environment files, lock files, minified, generated or vendored files and binaries. Secrets in the text that is sent are masked, and the repository's own diff converters are not run (`--no-textconv`).
+
+Podium reads history only from the repository of the current session and from the ones you add with `/podium-stage learn <path>`, and skips excluded folders and folders with a `.podium-private` file. It runs only read-only git commands for this.
+
+### The Signature tab
+
+Once enabled the tab shows: the learning status (on, learning with its step, or paused, with the last run and the next one), the profile counts (traits, how many you confirmed, cases, new ones), what was recorded this session, the tokens used today, the storage, the repositories with their state, one line per lens with a strength bar and its blind spot, and a **To review** list.
+
+- **To review:** new traits wait for you, five at a time. **Keep** confirms a trait; **Not me** rejects it.
+- **Buttons:** **Pause** / **Resume**, **Learn now**, **Learn from another repository...** (fills your prompt with `/podium-stage learn `) and **Erase...**.
 
 ### Where it is stored
 
-On your machine, under `~/.claude/podium/` (or `$CLAUDE_CONFIG_DIR/podium/`): your choices in `settings.json` and one journal file per session in `journal/`. Nothing is written into your projects, and Signature refuses to write through a symbolic link that would lead outside that folder. The files get your system's default permissions; on a computer shared with other accounts, restrict the folder (for example `chmod 700 ~/.claude/podium`).
+On your machine, under `~/.claude/podium/` (or `$CLAUDE_CONFIG_DIR/podium/`): your choices in `settings.json`, one journal file per session in `journal/`, and what was learned (profile, cases, index, learning state). Nothing is written into your projects, and Signature refuses to write through a symbolic link that would lead outside that folder. The files get your system's default permissions; on a computer shared with other accounts, restrict the folder (for example `chmod 700 ~/.claude/podium`).
 
 ### Keep a folder out
 
@@ -213,7 +240,13 @@ The tab says when the current folder is excluded and why. An exclusion saved in 
 | `/podium-stage signature on` / `off` | enable with the switches as set on the tab, or decline (off) |
 | `/podium-stage signature pause` / `resume` | stop or restart recording, data kept |
 | `/podium-stage signature exclude <folder>` / `include <folder>` | never record in a folder (absolute or `~` path), or lift that |
-| `/podium-stage signature erase` | empty everything stored (repeat to confirm) |
+| `/podium-stage signature learn-now` | learn now from what was recorded and from the history |
+| `/podium-stage learn <path>` | also learn from the history of another local repository (a folder, not a URL) |
+| `/podium-stage signature rebuild` | rebuild the index and the profile |
+| `/podium-stage signature forget <trait id>` / `forget #<case number>` | reject a trait or a case |
+| `/podium-stage signature erase` | empty everything stored (repeat to confirm; refused while learning runs) |
+
+These commands, and `on`, `off`, `pause`, `resume`, `exclude` and `include`, only run when you type them yourself: if Claude tries one, the answer is "Run this command yourself."
 
 See [PRIVACY.md](https://github.com/Jpi-net/podium/blob/main/PRIVACY.md) for the full policy.
 
