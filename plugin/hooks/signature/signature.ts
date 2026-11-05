@@ -1,13 +1,18 @@
 import { HistoryScanner, type HistorySource } from './history'
+import type { Case } from './cases'
 import { Journal } from './journal'
 import { Learner, type ModelAnswer, type ModelPort, type ModelRequest, type Progress, type Repository, type RunReport } from './learner'
 import { SignaturePaths, type SignatureFiles } from './paths'
 import { Profile, type ProfileData } from './profile'
+import { CaseRanker } from './ranker'
+import { Recall, type Recalled } from './recall'
 import { Redactor } from './redactor'
 import { SignatureSettings, type Consent, type Settings } from './settings'
 import { SignalExtractor, type PlanInput, type QuestionInput, type Signal, type SignalContext } from './signals'
 import { SignatureStore, type FsPort, type Sizes, type StoreState } from './store'
-import { Vocabulary } from './vocabulary'
+import { SituationTagger } from './tagger'
+import type { TagIndexData } from './tag-index'
+import { Vocabulary, type VocabularyData } from './vocabulary'
 
 export type GitPort = (argv: readonly string[], cwd: string) => Promise<{ exitCode: number, stdout: string }>
 
@@ -56,6 +61,8 @@ export type SignatureViewState = {
   review: SignatureReview[]
   repositories: SignatureRepository[]
   tokensToday: number
+  fidelity: { predictions: number, hits: number }
+  isSectionEmpty: boolean
 }
 
 export type StartInput = { cwd: string, session: string, isInteractive: boolean }
@@ -85,6 +92,15 @@ export class Signature {
   private static readonly MAX_TURN = 2000
   private static readonly DUE_CHANGES = 10
   private static readonly MAX_MANUAL = 10
+  private static readonly RECALL_MS = 300
+  private static readonly INDEX_CHECK_MS = 60_000
+  private static readonly SETTINGS_MS = 5000
+  private static readonly MAX_CONTEXT_TEXT = 4000
+  private static readonly MAX_QUESTIONS = 8
+  private static readonly HINT_K = 5
+  private static readonly HINT_MIN = 4.0
+  private static readonly INACTIVE = 'Signature is not active in this session.'
+  private static readonly RECOMMENDED = /[ \t]?\(Recommended\)\s*$/
   private static readonly MAX_JOURNAL_FILES = 100
   private static readonly MINUTE = 60_000
   private static readonly URL = /^(?:[a-z][a-z0-9+.-]*:\/\/|[^/\\\s]+@[^:\s]+:)/i
@@ -132,6 +148,17 @@ export class Signature {
   private static manual: Repository[] = []
   private static unnamed = new Set<string>()
   private static runs = 0
+  private static index: TagIndexData | undefined
+  private static indexAt = 0
+  private static indexCheckedAt = 0
+  private static vocabulary: VocabularyData = Vocabulary.base()
+  private static frozen = ''
+  private static settingsAt = 0
+  private static isSectionEmpty = false
+  private static locks = 0
+  private static proxyOffered = false
+  private static hasRecall = false
+  private static unsaved = { predicted: 0, hits: 0, missed: 0 }
   private static waiters: (() => void)[] = []
   private static lineCounts = new Map<string, { bytes: number, lines: number }>()
 
@@ -155,7 +182,9 @@ export class Signature {
       lenses: [],
       review: [],
       repositories: [],
-      tokensToday: 0
+      tokensToday: 0,
+      fidelity: { predictions: 0, hits: 0 },
+      isSectionEmpty: false
     }
   }
 
@@ -193,6 +222,7 @@ export class Signature {
         return
       }
       Signature.settings = read.value
+      Signature.settingsAt = ports.now()
       Signature.dropped = read.dropped
       Signature.consent = read.value.consent
       Signature.draft = Signature.draftOf(read.value)
@@ -201,6 +231,7 @@ export class Signature {
       await Signature.measure()
       if (Signature.consent === 'enabled') await Signature.restoreManual()
       if (Signature.consent === 'enabled' || Signature.consent === 'paused') await Signature.refresh()
+      await Signature.loadApplication(true)
     } catch (error) {
       Signature.fail(error)
     } finally {
@@ -246,12 +277,13 @@ export class Signature {
     }
   }
 
-  static onQuestion(input: Omit<QuestionInput, 'predicted'>): void {
+  static onQuestion(input: Omit<QuestionInput, 'predicted'>, predicted: Readonly<Record<string, string>> = {}): void {
     try {
+      if (input && Signature.isApplying() && Signature.settings.apply.hints) Signature.score(input, predicted)
       if (!Signature.isCapturing() || !input) return
       const context = Signature.context()
       if (context === undefined) return
-      Signature.record(SignalExtractor.questions(context, { ...input, predicted: {} }))
+      Signature.record(SignalExtractor.questions(context, { ...input, predicted }))
     } catch (error) {
       Signature.fail(error)
     }
@@ -312,6 +344,7 @@ export class Signature {
       Signature.part = 0
       Signature.startedAt = Signature.now()
       Signature.isAfterAbort = false
+      await Signature.loadApplication(true)
     } catch (error) {
       Signature.fail(error)
     }
@@ -320,6 +353,7 @@ export class Signature {
   static async end(): Promise<void> {
     try {
       await Signature.request(false)
+      await Signature.persistStats(true)
     } catch (error) {
       Signature.fail(error)
     }
@@ -345,7 +379,12 @@ export class Signature {
       lenses: Signature.lenses.map((item) => ({ ...item })),
       review: Signature.review.map((item) => ({ ...item })),
       repositories: Signature.repositories.map((item) => ({ ...item })),
-      tokensToday: Signature.tokensToday
+      tokensToday: Signature.tokensToday,
+      fidelity: {
+        predictions: Signature.profile.stats.predictions + Signature.unsaved.predicted,
+        hits: Signature.profile.stats.hits + Signature.unsaved.hits
+      },
+      isSectionEmpty: Signature.isSectionEmpty
     }
   }
 
@@ -377,6 +416,7 @@ export class Signature {
       await Signature.prepare()
       await Signature.measure()
       await Signature.refresh()
+      await Signature.loadApplication(false)
       Signature.emit()
       if (Signature.isExcluded) return `Signature is on, but it does not learn here: ${Signature.exclusionReason}.`
       return Signature.ENABLED
@@ -415,6 +455,7 @@ export class Signature {
     try {
       await Signature.prepare()
       await Signature.refresh()
+      await Signature.loadApplication(false)
       Signature.emit()
       if (Signature.isExcluded) return `Signature is on again, but it does not learn here: ${Signature.exclusionReason}.`
     } catch (error) {
@@ -571,6 +612,306 @@ export class Signature {
     }
   }
 
+  static isApplying(): boolean {
+    return Signature.ports !== undefined
+      && Signature.files !== undefined
+      && Signature.base !== undefined
+      && Signature.isReady
+      && !Signature.isBlocked
+      && !Signature.isErasing
+      && Signature.consent === 'enabled'
+      && Signature.input.isInteractive
+      && !Signature.isExcluded
+  }
+
+  static sectionText(): string {
+    return Signature.frozen
+  }
+
+  static recallSpec(): { name: string, description: string, inputSchema: Record<string, unknown> } | undefined {
+    try {
+      const apply = Signature.settings.apply
+      if (!Signature.isApplying() || !(apply.proxy || apply.section)) return undefined
+      return { name: Recall.TOOL, description: Recall.description(Signature.vocabulary), inputSchema: Recall.schema() }
+    } catch {
+      return undefined
+    }
+  }
+
+  static isProxyOffered(): boolean {
+    try {
+      return Signature.proxyOffered
+    } catch {
+      return false
+    }
+  }
+
+  static isRecallRegistered(): boolean {
+    return Signature.hasRecall
+  }
+
+  static async markRecall(isRegistered: boolean): Promise<void> {
+    try {
+      if (Signature.hasRecall === isRegistered) return
+      Signature.hasRecall = isRegistered
+      if (Signature.frozen !== '') await Signature.loadApplication(true)
+    } catch {
+      return
+    }
+  }
+
+  static async contextFor(text: string): Promise<string> {
+    try {
+      const done = await Signature.bounded(Signature.contextWork(text))
+      if (done === undefined) return ''
+      Signature.recordUse(done.ids)
+      return done.block
+    } catch {
+      return ''
+    }
+  }
+
+  static async hintFor(input: unknown): Promise<{ notice: string, predictions: Record<string, string> }> {
+    const none = { notice: '', predictions: {} as Record<string, string> }
+    try {
+      return (await Signature.bounded(Signature.hintWork(input))) ?? none
+    } catch {
+      return none
+    }
+  }
+
+  static async recall(input: unknown): Promise<string> {
+    try {
+      await Signature.current()
+      const apply = Signature.settings.apply
+      if (!Signature.isApplying() || !(apply.proxy || apply.section)) return Signature.INACTIVE
+      const raw = typeof input === 'object' && input !== null ? input as Record<string, unknown> : {}
+      const parsed = Recall.parseInput(typeof raw.input === 'object' && raw.input !== null ? raw.input : raw)
+      if (parsed === undefined) return 'Give the situation in one sentence.'
+      const ports = Signature.ports
+      const base = Signature.base
+      if (ports === undefined || base === undefined) return Signature.INACTIVE
+      await Signature.refreshIndex()
+      const index = Signature.index
+      if (index === undefined) return Recall.format([])
+      const ranked = Recall.deep(index, Signature.vocabulary, parsed, base.stack, base.projectId, ports.now(), Signature.settings.halfLifeMonths)
+      const recalled = await Signature.recalled(ranked)
+      Signature.recordUse(recalled.map((item) => item.value.id))
+      return Recall.format(recalled)
+    } catch {
+      return Signature.INACTIVE
+    }
+  }
+
+  private static async current(): Promise<void> {
+    if (Signature.now() - Signature.settingsAt > Signature.SETTINGS_MS) await Signature.reload()
+  }
+
+  private static async contextWork(text: string): Promise<{ block: string, ids: number[] }> {
+    const none = { block: '', ids: [] as number[] }
+    await Signature.current()
+    if (!Signature.isApplying() || !Signature.settings.apply.context || typeof text !== 'string') return none
+    if (text.trimStart().startsWith('!')) return none
+    const ports = Signature.ports
+    const base = Signature.base
+    if (ports === undefined || base === undefined) return none
+    await Signature.refreshIndex()
+    const index = Signature.index
+    if (index === undefined) return none
+    const body = text.slice(0, Signature.MAX_CONTEXT_TEXT)
+    const ranked = Recall.fast(
+      index,
+      Signature.vocabulary,
+      { text: body, paths: SituationTagger.paths(body), stack: base.stack },
+      base.projectId,
+      ports.now(),
+      Signature.settings.halfLifeMonths
+    )
+    if (ranked.length === 0) return none
+    const recalled = await Signature.recalled(ranked)
+    if (recalled.length === 0) return none
+    const hitIds = new Set(recalled.map((item) => item.value.id))
+    const spots = Signature.profile.traits.filter(
+      (trait) => trait.isBlindSpot && !trait.defaultCovered && (trait.status === 'confirmed' || trait.status === 'observed') && trait.cases.some((id) => hitIds.has(id))
+    )
+    const block = Profile.contextBlock(recalled.map((item) => item.value), spots)
+    return block === '' ? none : { block, ids: recalled.map((item) => item.value.id) }
+  }
+
+  private static async hintWork(input: unknown): Promise<{ notice: string, predictions: Record<string, string> }> {
+    const none = { notice: '', predictions: {} as Record<string, string> }
+    await Signature.current()
+    if (!Signature.isApplying() || !Signature.settings.apply.hints || typeof input !== 'object' || input === null) return none
+    const questions = (input as Record<string, unknown>).questions
+    const base = Signature.base
+    if (!Array.isArray(questions) || base === undefined) return none
+    await Signature.refreshIndex()
+    const index = Signature.index
+    if (index === undefined) return none
+    const found = await Promise.all(
+      questions.slice(0, Signature.MAX_QUESTIONS).map((item) => Signature.predictOne(item, index, base.stack, base.projectId).catch(() => undefined))
+    )
+    const predictions: Record<string, string> = {}
+    let notice = ''
+    for (const prediction of found) {
+      if (prediction === undefined) continue
+      predictions[prediction.question] = prediction.label
+      if (notice === '') notice = `Signature: you usually choose "${prediction.label}"`
+    }
+    return { notice, predictions }
+  }
+
+  private static async recalled(ranked: readonly { id: number, score: number }[]): Promise<Recalled[]> {
+    const ports = Signature.ports
+    const files = Signature.files
+    const projectId = Signature.base === undefined ? '' : Signature.base.projectId
+    if (ports === undefined || files === undefined || ranked.length === 0) return []
+    const cases = await Recall.read(ports.fs, files, ranked.map((item) => item.id))
+    const byId = new Map<number, Case>(cases.map((item) => [item.id, item]))
+    const out: Recalled[] = []
+    for (const item of ranked) {
+      const value = byId.get(item.id)
+      if (value !== undefined && Recall.applicable(value, projectId)) out.push({ value, score: item.score })
+    }
+    return out
+  }
+
+  private static async predictOne(
+    item: unknown, index: TagIndexData, stack: readonly string[], projectId: string
+  ): Promise<{ question: string, label: string } | undefined> {
+    const ports = Signature.ports
+    if (ports === undefined || typeof item !== 'object' || item === null) return undefined
+    const raw = item as Record<string, unknown>
+    if (typeof raw.question !== 'string' || !Array.isArray(raw.options)) return undefined
+    const labels: string[] = []
+    for (const option of raw.options.slice(0, 12)) {
+      const label = typeof option === 'string' ? option : (typeof option === 'object' && option !== null ? (option as Record<string, unknown>).label : undefined)
+      if (typeof label === 'string') labels.push(label.replace(Signature.RECOMMENDED, '').trim())
+    }
+    if (labels.length < 2) return undefined
+    const header = typeof raw.header === 'string' ? raw.header : ''
+    const tags = Vocabulary.fromText(Signature.vocabulary, `${raw.question} ${header} ${labels.join(' ')}`)
+    const query = Recall.query(Signature.vocabulary, tags, stack, projectId, ports.now(), Signature.settings.halfLifeMonths)
+    const ranked = CaseRanker.top(index, Signature.vocabulary, query, Signature.HINT_K, Signature.HINT_MIN)
+    if (ranked.length === 0) return undefined
+    const recalled = await Signature.recalled(ranked)
+    const prediction = Profile.predict(raw.question, labels, recalled)
+    return prediction === undefined ? undefined : { question: prediction.question, label: prediction.label }
+  }
+
+  private static async bounded<T>(task: Promise<T>): Promise<T | undefined> {
+    const wait = Signature.ports === undefined ? undefined : Signature.ports.wait
+    if (wait === undefined) return task
+    return Promise.race([task, wait(Signature.RECALL_MS).then(() => undefined)])
+  }
+
+  private static recordUse(ids: readonly number[]): void {
+    if (ids.length === 0 || !Signature.isCapturing()) return
+    const context = Signature.context()
+    if (context !== undefined) Signature.record([SignalExtractor.use(context, ids)])
+  }
+
+  private static score(input: Omit<QuestionInput, 'predicted'>, predicted: Readonly<Record<string, string>>): void {
+    if (typeof input.afkTimeoutMs === 'number' || typeof input.answers !== 'object' || input.answers === null) return
+    const answers = input.answers as Record<string, unknown>
+    for (const question of Object.keys(predicted)) {
+      const answer = answers[question]
+      if (typeof answer !== 'string') continue
+      Signature.unsaved.predicted += 1
+      if (answer.split(', ').map((part) => part.replace(Signature.RECOMMENDED, '').trim()).includes(predicted[question] ?? '')) Signature.unsaved.hits += 1
+      else Signature.unsaved.missed += 1
+    }
+  }
+
+  private static async persistStats(isQuiet = false): Promise<void> {
+    try {
+      const pending = Signature.unsaved
+      if (pending.predicted === 0 || Signature.learning.isRunning || Signature.isBlocked || !Signature.settings.apply.hints) return
+      const ports = Signature.ports
+      const files = Signature.files
+      if (ports === undefined || files === undefined || Signature.consent !== 'enabled') return
+      const taken = { ...pending }
+      Signature.unsaved = { predicted: 0, hits: 0, missed: 0 }
+      let isSaved = false
+      try {
+        isSaved = (await Signature.withLock(async () => {
+          const read = await SignatureStore.readProfile(ports.fs, files)
+          if (read.isNewer) return false
+          const next = Profile.record(read.value, taken.predicted, taken.hits, taken.missed)
+          return SignatureStore.writeProfile(ports.fs, files, next, Signature.realRoot)
+        })) === true
+      } finally {
+        if (!isSaved) {
+          Signature.unsaved = {
+            predicted: Signature.unsaved.predicted + taken.predicted,
+            hits: Signature.unsaved.hits + taken.hits,
+            missed: Signature.unsaved.missed + taken.missed
+          }
+        }
+      }
+      if (isSaved) {
+        Signature.profile = Profile.record(Signature.profile, taken.predicted, taken.hits, taken.missed)
+        if (!isQuiet) {
+          await Signature.refresh()
+          Signature.emit()
+        }
+      }
+    } catch {
+      return
+    }
+  }
+
+  private static async loadApplication(isFreezing: boolean): Promise<void> {
+    try {
+      const ports = Signature.ports
+      const files = Signature.files
+      if (ports === undefined || files === undefined || Signature.isBlocked) return
+      const isLive = Signature.consent === 'enabled' && !Signature.isExcluded && Signature.input.isInteractive
+      if (!isLive) {
+        if (isFreezing) {
+          Signature.frozen = ''
+          Signature.proxyOffered = false
+        }
+        return
+      }
+      const overlay = await SignatureStore.readOverlay(ports.fs, files)
+      if (!overlay.isNewer) Signature.vocabulary = Vocabulary.merge(Vocabulary.base(), overlay.value)
+      await Signature.refreshIndex(true)
+      const profile = await SignatureStore.readProfile(ports.fs, files)
+      if (!profile.isNewer) Signature.profile = profile.value
+      if (isFreezing) {
+        Signature.proxyOffered = Signature.settings.apply.proxy
+        if (Signature.settings.apply.section && Signature.base !== undefined) {
+          Signature.frozen = Profile.section(Signature.profile, { stack: Signature.base.stack, projectId: Signature.base.projectId }, Signature.hasRecall)
+        } else {
+          Signature.frozen = ''
+        }
+      }
+    } catch {
+      return
+    }
+  }
+
+  private static async refreshIndex(isForced = false): Promise<void> {
+    try {
+      const ports = Signature.ports
+      const files = Signature.files
+      if (ports === undefined || files === undefined) return
+      const now = ports.now()
+      if (!isForced && now - Signature.indexCheckedAt < Signature.INDEX_CHECK_MS) return
+      Signature.indexCheckedAt = now
+      const entries = await ports.fs.list(files.root)
+      const entry = Array.isArray(entries) ? entries.find((item) => item.name === 'index.json') : undefined
+      const mtime = entry !== undefined && typeof entry.mtimeMs === 'number' ? entry.mtimeMs : 0
+      if (!isForced && Signature.index !== undefined && mtime === Signature.indexAt) return
+      const read = await SignatureStore.readIndex(ports.fs, files)
+      Signature.index = read.isNewer ? undefined : read.value
+      Signature.indexAt = mtime
+    } catch {
+      return
+    }
+  }
+
   static modelRequest(request: ModelRequest): { model: string, system: { text: string, cache?: true }[], prompt: string, maxTokens: number, timeoutMs: number } {
     return {
       model: request.model,
@@ -673,6 +1014,8 @@ export class Signature {
     Signature.repositories = []
     Signature.tokensToday = 0
     Signature.profile = Profile.empty()
+    Signature.unsaved = { predicted: 0, hits: 0, missed: 0 }
+    Signature.isSectionEmpty = false
     Signature.unnamed = new Set<string>()
   }
 
@@ -776,6 +1119,7 @@ export class Signature {
       if (read.isNewer) return undefined
       const wasConsent = Signature.consent
       Signature.settings = read.value
+      Signature.settingsAt = Signature.now()
       Signature.consent = read.value.consent
       if (wasConsent !== Signature.consent) Signature.emit()
       return read.value
@@ -821,6 +1165,8 @@ export class Signature {
       Signature.learning = { ...Signature.learning, isRunning: false, step: '', done: 0, total: 0, lastRunAt: at, lastError }
       if (report !== undefined) Signature.markUnnamed(report.note)
       await Signature.refresh()
+      await Signature.loadApplication(false)
+      await Signature.persistStats()
       const learned = report === undefined ? 0 : report.newTraits + report.added
       if (learned > 0 && Signature.settings.notify && Signature.ports !== undefined) {
         Signature.ports.toast(`Signature learned ${learned} new ${learned === 1 ? 'thing' : 'things'} about how you work.`)
@@ -878,9 +1224,14 @@ export class Signature {
       return 'That folder is excluded from Signature.'
     }
     if (await ports.fs.exists(top + '/' + Signature.PRIVATE)) return `That folder has a ${Signature.PRIVATE} file.`
-    const remote = (await Signature.git(['-C', top, 'config', '--get', 'remote.origin.url'], top)).split('\n')[0]?.trim() ?? ''
     const source: HistorySource = 'manual'
-    return { root: top, name: HistoryScanner.repoName(top), id: SignalExtractor.projectId(remote !== '' ? remote : top), source }
+    const realTop = await Signature.real(top)
+    const current = Signature.location === undefined ? '' : Signature.location.root
+    if (current !== '' && Signature.settings.capture.history) {
+      const realCurrent = await Signature.real(SignaturePaths.normalize(current))
+      if (realCurrent !== '' && realCurrent === realTop) return 'This repository is already read automatically.'
+    }
+    return { root: top, name: HistoryScanner.repoName(top), id: SignalExtractor.projectId('manual:' + (realTop !== '' ? realTop : top)), source }
   }
 
   private static async refresh(): Promise<void> {
@@ -911,6 +1262,9 @@ export class Signature {
           cases: set.cases.length,
           newTraits: live.filter((trait) => trait.isNew && trait.status === 'observed').length
         }
+        const base = Signature.base
+        Signature.isSectionEmpty = Signature.settings.apply.section && base !== undefined && live.length > 0
+          && Profile.qualifying(profile.value, { stack: base.stack, projectId: base.projectId }) === 0
         Signature.lenses = Profile.lenses(profile.value).map((item) => ({ ...item }))
         Signature.review = Profile.review(profile.value).map((trait) => ({ id: trait.id, statement: trait.statement, lens: trait.lens, confidence: trait.confidence }))
       }
@@ -996,22 +1350,33 @@ export class Signature {
       const ports = Signature.ports
       const files = Signature.files
       if (ports === undefined || files === undefined) return Signature.NOT_READY
-      const owner = (Signature.input.session === '' ? 'signature' : Signature.input.session) + ':edit'
-      const wait = ports.wait
-      const isTaken = await SignatureStore.takeLock(ports.fs, files, owner, ports.now(), Signature.realRoot, wait === undefined ? () => Promise.resolve() : wait)
-      if (!isTaken) return Signature.BUSY
-      try {
+      const message = await Signature.withLock(async () => {
         const today = Signature.day(ports.now())
-        const message = isCase ? await Signature.rejectCase(id, today) : await Signature.decideTrait(text, action, today)
+        const result = isCase ? await Signature.rejectCase(id, today) : await Signature.decideTrait(text, action, today)
         await Signature.refresh()
         Signature.emit()
-        return message
-      } finally {
-        await SignatureStore.releaseLock(ports.fs, files, owner, Signature.realRoot).catch(() => undefined)
-      }
+        return result
+      })
+      return message === undefined ? Signature.BUSY : message
     } catch (error) {
       Signature.fail(error)
       return Signature.lastError
+    }
+  }
+
+  private static async withLock<T>(task: () => Promise<T>): Promise<T | undefined> {
+    const ports = Signature.ports
+    const files = Signature.files
+    if (ports === undefined || files === undefined) return undefined
+    Signature.locks += 1
+    const owner = `${Signature.input.session === '' ? 'signature' : Signature.input.session}:edit:${Signature.locks}`
+    const wait = ports.wait
+    const isTaken = await SignatureStore.takeLock(ports.fs, files, owner, ports.now(), Signature.realRoot, wait === undefined ? () => Promise.resolve() : wait)
+    if (!isTaken) return undefined
+    try {
+      return await task()
+    } finally {
+      await SignatureStore.releaseLock(ports.fs, files, owner, Signature.realRoot).catch(() => undefined)
     }
   }
 
@@ -1066,6 +1431,15 @@ export class Signature {
     Signature.lastActivityAt = 0
     Signature.lastTurn = ''
     Signature.manual = []
+    Signature.index = undefined
+    Signature.indexAt = 0
+    Signature.indexCheckedAt = 0
+    Signature.vocabulary = Vocabulary.base()
+    Signature.frozen = ''
+    Signature.settingsAt = 0
+    Signature.proxyOffered = false
+    Signature.hasRecall = false
+    Signature.unsaved = { predicted: 0, hits: 0, missed: 0 }
     Signature.resetLearning()
     Signature.dropped = []
     Signature.storage = { indexBytes: 0, casesBytes: 0, journalBytes: 0, emptyFiles: 0 }

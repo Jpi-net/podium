@@ -34,7 +34,8 @@ export class SignatureView {
   private static readonly PRIVACY: readonly Row[] = [
     { label: 'It records', text: "your prompts (masked), your answers to Claude's questions, plans you accept or refuse, and the history of repositories you open" },
     { label: 'Never', text: 'file contents, tool outputs, secrets' },
-    { label: 'Sent', text: 'selected excerpts go to Claude through your own session to be summarised (uses your plan, capped)' }
+    { label: 'Sent', text: 'selected excerpts go to Claude through your own session to be summarised (uses your plan, capped)' },
+    { label: 'Brings', text: "a short profile into Claude's instructions (from the next thread), precedents with each prompt, a hint under Claude's questions, and a stand-in reviewer agent" }
   ]
   private static readonly CHOICES: readonly Choice[] = [
     { key: 'sessions', label: 'Learn from my sessions' },
@@ -45,6 +46,7 @@ export class SignatureView {
   private static readonly EXCLUDE_HINT = 'Never learn in: add a .podium-private file to a folder, or /podium-stage signature exclude <folder>'
   private static readonly OFF_HINT = 'Turn it on with /podium-stage signature on.'
   private static readonly BAR = 9
+  private static readonly FIDELITY_MIN = 10
   private static readonly REVIEW_SHOWN = 5
   private static readonly CONFIRM = 'Press Erase again within 30 seconds to erase everything Signature stored.'
 
@@ -284,6 +286,10 @@ export class SignatureView {
     out.push(
       SignatureView.line(ui, 'sig-profile', width, `${label('Profile')}${counts.traits} traits (${counts.confirmed} confirmed) · ${counts.cases} cases · ${counts.newTraits} new`, Theme.TEXT)
     )
+    if (state.fidelity.predictions >= SignatureView.FIDELITY_MIN) {
+      const percent = Math.round((state.fidelity.hits / state.fidelity.predictions) * 100)
+      out.push(SignatureView.line(ui, 'sig-fidelity', width, `${label('Fidelity')}${percent} % of your choices predicted`, Theme.TEXT))
+    }
     out.push(SignatureView.line(ui, 'sig-signals', width, `${label('Recorded')}${state.signals} signals this session · ${state.buffered} waiting to be saved`, Theme.TEXT))
     out.push(SignatureView.line(ui, 'sig-tokens', width, `${label('Today')}${SignatureView.tokens(state.tokensToday)} tokens used`, Theme.MUTED))
     out.push(SignatureView.line(ui, 'sig-storage', width, `${label('Storage')}${SignatureView.storage(state.storage)}`, Theme.MUTED))
@@ -293,6 +299,9 @@ export class SignatureView {
     if (state.lenses.length > 0) {
       out.push(SignatureView.blank(ui, 'sig-gap-lenses'))
       out.push(...SignatureView.lenses(ui, width, state))
+    }
+    if (state.isSectionEmpty) {
+      out.push(SignatureView.line(ui, 'sig-section-empty', width, ' Keep traits to bring them into your sessions.', Theme.MUTED))
     }
     if (state.review.length > 0) {
       out.push(SignatureView.blank(ui, 'sig-gap-review'))

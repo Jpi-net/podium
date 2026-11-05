@@ -590,3 +590,55 @@ test('ago, bar and tokens format their values', () => {
   expect(SignatureView.tokens(999)).toBe('999')
   expect(SignatureView.tokens(12_345)).toBe('12.3 k')
 })
+
+test('the fidelity line is hidden below ten predictions', () => {
+  // Act
+  const drawn = ViewFixture.draw(ViewFixture.enabled({ fidelity: { predictions: 9, hits: 9 } }))
+
+  // Assert
+  expect(drawn.text).not.toContain('Fidelity')
+})
+
+test('the fidelity line shows the percentage from ten predictions', () => {
+  // Act
+  const drawn = ViewFixture.draw(ViewFixture.enabled({ fidelity: { predictions: 10, hits: 7 } }))
+
+  // Assert
+  expect(drawn.text).toContain('Fidelity')
+  expect(drawn.text).toContain('70 % of your choices predicted')
+})
+
+test('the fidelity percentage is rounded', () => {
+  // Act
+  const drawn = ViewFixture.draw(ViewFixture.enabled({ fidelity: { predictions: 30, hits: 20 } }))
+
+  // Assert
+  expect(drawn.text).toContain('67 % of your choices predicted')
+})
+
+test('the opt-in view tells what Signature brings into Claude', () => {
+  // Act
+  const drawn = ViewFixture.draw(ViewFixture.state())
+
+  // Assert
+  const text = drawn.text.replace(/\s+/g, ' ')
+  expect(text).toContain('Brings')
+  expect(text).toContain("a short profile into Claude's instructions")
+  expect(text).toContain('a stand-in reviewer agent')
+})
+
+test('the dashboard shows the keep hint when the section is empty', () => {
+  // Act
+  const drawn = ViewFixture.draw(ViewFixture.enabled({ isSectionEmpty: true }))
+
+  // Assert
+  expect(drawn.text).toContain('Keep traits to bring them into your sessions.')
+})
+
+test('the dashboard hides the keep hint when the section is not empty', () => {
+  // Act
+  const drawn = ViewFixture.draw(ViewFixture.enabled({ isSectionEmpty: false }))
+
+  // Assert
+  expect(drawn.text).not.toContain('Keep traits to bring them')
+})

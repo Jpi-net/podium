@@ -1,6 +1,10 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { AgentSpawnInput, On } from 'claude-code'
 import { Fixtures } from './fixtures/sample-project'
+import { Cases } from '../hooks/signature/cases'
+import { Profile } from '../hooks/signature/profile'
+import { TagIndex } from '../hooks/signature/tag-index'
+import { SignatureFixtures } from './fixtures/signature'
 
 const PANE = {
   plugin: 'podium',
@@ -18,7 +22,7 @@ const PANE = {
 
 const VIEWPORT = { columns: 120, rows: 50 }
 
-type Sink = { notifications: string[]; copies: string[]; files?: Record<string, string>; stored?: Record<string, unknown>; fetchAgeMs?: number; isBare?: boolean; opens?: number; submitted?: string[]; env?: Record<string, string>; isRooted?: boolean; isDropping?: boolean }
+type Sink = { notifications: string[]; copies: string[]; files?: Record<string, string>; stored?: Record<string, unknown>; fetchAgeMs?: number; isBare?: boolean; opens?: number; submitted?: string[]; env?: Record<string, string>; isRooted?: boolean; isDropping?: boolean; received?: Record<string, unknown>[] }
 
 class Engine {
   static spawn(subagentType: string, description: string): AgentSpawnInput {
@@ -91,6 +95,7 @@ class Engine {
     })
     on('prompt.submit', (_, e) => {
       sink.submitted?.push(e.text)
+      sink.received?.push(e as never)
       return sink.isDropping === true ? ({ drop: 'blocked' } as never) : { text: e.text }
     })
     on('process.run', (_, e) => {
@@ -1750,8 +1755,9 @@ class SignatureEngine {
     return JSON.stringify(await command({ command: 'podium-stage', args, origin: { kind } } as never))
   }
 
-  static async ready($: { command: { run: (input: never) => Promise<unknown> } }): Promise<void> {
+  static async ready($: { command: { run: (input: never) => Promise<unknown> } }, record?: { tools: unknown[], registered: (() => void)[] }): Promise<void> {
     await SignatureEngine.run((input) => $.command.run(input), 'signature resume')
+    if (record !== undefined && record.tools.length === 0) await new Promise<void>((resolve) => void record.registered.push(resolve))
   }
 
   static sink(consent: string): Sink {
@@ -1760,12 +1766,32 @@ class SignatureEngine {
     return { notifications: [], copies: [], files, env: { HOME: '/Users/j' }, isRooted: true }
   }
 
-  static stub(on: On, sink: Sink, withTools = true): { writes: string[], attempts: string[], isFailing: boolean, created: number, ended: number, session: string } {
-    const record = { writes: [] as string[], attempts: [] as string[], isFailing: false, created: 0, ended: 0, session: 'old' }
+  static stub(on: On, sink: Sink, withTools = true): { writes: string[], attempts: string[], isFailing: boolean, created: number, ended: number, session: string, order: string[], tools: unknown[], watchers: { part: string, resolve: () => void }[], registered: (() => void)[], registerCalls: number, failRegister: number, clock: { isAuto: boolean, pending: (() => void)[], fire: () => void }, written: (part: string) => Promise<void> } {
+    const watchers: { part: string, resolve: () => void }[] = []
+    const record = {
+      writes: [] as string[],
+      attempts: [] as string[],
+      isFailing: false,
+      created: 0,
+      ended: 0,
+      session: 'old',
+      order: [] as string[],
+      tools: [] as unknown[],
+      watchers,
+      registered: [] as (() => void)[],
+      registerCalls: 0,
+      failRegister: 0,
+      clock: { isAuto: false, pending: [] as (() => void)[], fire: () => { for (const resolve of record.clock.pending.splice(0)) resolve() } },
+      written: (part: string): Promise<void> => (record.writes.some((path) => path.includes(part)) ? Promise.resolve() : new Promise<void>((resolve) => void watchers.push({ part, resolve })))
+    }
     Engine.stub(on, withTools, undefined, undefined, sink)
     on('clock.every', () => {
       record.created += 1
       return { value: { id: `timer-${record.created}` } } as never
+    })
+    on('clock.after', async () => {
+      if (!record.clock.isAuto) await new Promise<void>((resolve) => void record.clock.pending.push(resolve))
+      return { value: { id: 'after' } } as never
     })
     on('session.id', () => ({ value: record.session }) as never)
     on('session.end', () => {
@@ -1776,11 +1802,46 @@ class SignatureEngine {
       record.attempts.push(String(e.path))
       if (record.isFailing) throw new Error('disk full')
       record.writes.push(String(e.path))
+      for (const watcher of record.watchers.filter((item) => String(e.path).includes(item.part))) watcher.resolve()
       if (sink.files) sink.files[String(e.path)] = String((e as Record<string, unknown>).text ?? (e as Record<string, unknown>).content ?? '')
       return { value: undefined }
     })
     on('fs.exists', () => ({ value: false }))
+    on('prompt.compose', () => ({ sections: [{ id: 'engine', scope: 'session', text: 'engine text' }] }) as never)
+    on('agent.offer', () => ({ isOffered: true }) as never)
+    on('ui.notice', (_, e) => {
+      record.order.push(`notice ${String((e as Record<string, unknown>).text)}`)
+      return { value: undefined } as never
+    })
+    on('tool.register', (_, e) => {
+      record.registerCalls += 1
+      if (record.failRegister > 0) {
+        record.failRegister -= 1
+        throw new Error('registration failed')
+      }
+      record.tools.push(e)
+      for (const resolve of record.registered.splice(0)) resolve()
+      return { value: undefined } as never
+    })
     return record
+  }
+
+  static applied(options: { apply?: Record<string, boolean>, exclude?: string[], traits?: boolean, shard?: boolean } = {}): Sink {
+    const sink = SignatureEngine.sink('')
+    const files = sink.files ?? {}
+    const filler = Array.from({ length: 20 }, (_, index) => SignatureFixtures.caseOf({ id: index + 1, tags: ['caching'], confidence: 0.9 }))
+    const cases = [
+      ...filler,
+      SignatureFixtures.caseOf({ id: 100, tags: ['untrusted-input', 'fail-open'], confidence: 0.9, evidenceCount: 3 }),
+      SignatureFixtures.caseOf({ id: 101, tags: ['db-schema'], status: 'confirmed', confidence: 0.9, choice: 'Use Postgres for storage' })
+    ]
+    files[`${SignatureEngine.ROOT}/settings.json`] = JSON.stringify({ version: 1, consent: 'enabled', apply: { section: true, context: true, hints: true, proxy: true, ...options.apply }, exclude: options.exclude ?? [] })
+    files[`${SignatureEngine.ROOT}/index.json`] = TagIndex.serialize(TagIndex.build(cases))
+    if (options.shard !== false) files[`${SignatureEngine.ROOT}/cases/000.jsonl`] = cases.map((item) => Cases.toLine(item) + '\n').join('')
+    const trait = options.traits === false ? [] : [SignatureFixtures.trait({ status: 'confirmed', confidence: 0.9 })]
+    files[`${SignatureEngine.ROOT}/profile.json`] = Profile.serialize(SignatureFixtures.profile(trait))
+    sink.received = []
+    return sink
   }
 
   static journal(sink: Sink, session = ''): { kind: string, session: string, data: Record<string, unknown> }[] {
@@ -2220,4 +2281,288 @@ test('the learn-now, rebuild and forget subcommands from a model origin are refu
 
   // Assert
   expect(answers).toEqual(Array(3).fill('{"text":"Run this command yourself."}'))
+})
+
+test('prompt compose adds the Signature section after the engine sections', async ($, on) => {
+  // Arrange
+  SignatureEngine.stub(on, SignatureEngine.applied())
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await SignatureEngine.ready($)
+
+  // Act
+  const composed = (await $.prompt.compose({ promptModel: 'claude-sonnet-5-5', outputStyle: null, tools: [], traits: [], surfaces: [] } as never)) as unknown as { sections: { id: string, scope: string, text: string }[] }
+
+  // Assert
+  expect(composed.sections.map((section) => section.id)).toEqual(['engine', 'podium:signature'])
+  expect(composed.sections[1]?.scope).toBe('session')
+  expect(composed.sections[1]?.text).toContain('Security: ')
+})
+
+test('prompt compose adds nothing when the section text is empty', async ($, on) => {
+  // Arrange
+  SignatureEngine.stub(on, SignatureEngine.applied({ traits: false }))
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await SignatureEngine.ready($)
+
+  // Act
+  const composed = (await $.prompt.compose({ promptModel: 'claude-sonnet-5-5', outputStyle: null, tools: [], traits: [], surfaces: [] } as never)) as unknown as { sections: { id: string }[] }
+
+  // Assert
+  expect(composed.sections.map((section) => section.id)).toEqual(['engine'])
+})
+
+test('a matching prompt gets exactly one context entry', async ($, on) => {
+  // Arrange
+  const sink = SignatureEngine.applied()
+  SignatureEngine.stub(on, sink)
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await SignatureEngine.ready($)
+
+  // Act
+  await $.prompt.submit({ text: 'validate the input and fall back to a default', origin: { kind: 'composer' } } as never)
+
+  // Assert
+  const context = sink.received?.[sink.received.length - 1]?.context as string[] | undefined
+  expect(context).toHaveLength(1)
+  expect(context?.[0]).toContain('Developer precedents (Podium Signature')
+})
+
+test('a meta prompt passes through without a context entry', async ($, on) => {
+  // Arrange
+  const sink = SignatureEngine.applied()
+  SignatureEngine.stub(on, sink)
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await SignatureEngine.ready($)
+
+  // Act
+  await $.prompt.submit({ text: 'validate the input and fall back to a default', isMeta: true, origin: { kind: 'composer' } } as never)
+
+  // Assert
+  expect(sink.received?.[sink.received.length - 1]?.context).toBeUndefined()
+})
+
+test('a task notification passes through without a context entry', async ($, on) => {
+  // Arrange
+  const sink = SignatureEngine.applied()
+  SignatureEngine.stub(on, sink)
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await SignatureEngine.ready($)
+
+  // Act
+  await $.prompt.submit({ text: 'validate the input and fall back to a default', origin: { kind: 'task-notification' } } as never)
+
+  // Assert
+  expect(sink.received?.[sink.received.length - 1]?.context).toBeUndefined()
+})
+
+test('a prompt starting with an exclamation mark passes through without a context entry', async ($, on) => {
+  // Arrange
+  const sink = SignatureEngine.applied()
+  SignatureEngine.stub(on, sink)
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await SignatureEngine.ready($)
+
+  // Act
+  await $.prompt.submit({ text: '!validate the input and fall back to a default', origin: { kind: 'composer' } } as never)
+
+  // Assert
+  expect(sink.received?.[sink.received.length - 1]?.context).toBeUndefined()
+})
+
+test('a slash command passes through without a context entry', async ($, on) => {
+  // Arrange
+  const sink = SignatureEngine.applied()
+  SignatureEngine.stub(on, sink)
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await SignatureEngine.ready($)
+
+  // Act
+  await $.prompt.submit({ text: '/feat validate the input and fall back to a default', command: { name: 'feat', args: 'validate the input and fall back to a default' }, origin: { kind: 'composer' } } as never)
+
+  // Assert
+  expect(sink.received?.[sink.received.length - 1]?.context).toBeUndefined()
+})
+
+test('a prompt passes through unchanged when the precedents cannot be read', async ($, on) => {
+  // Arrange
+  const sink = SignatureEngine.applied({ shard: false })
+  SignatureEngine.stub(on, sink)
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await SignatureEngine.ready($)
+
+  // Act
+  await $.prompt.submit({ text: 'validate the input and fall back to a default', origin: { kind: 'composer' } } as never)
+
+  // Assert
+  expect(sink.received?.[sink.received.length - 1]?.context).toBeUndefined()
+})
+
+test('a question gets a notice before the call and its prediction in the journal', async ($, on) => {
+  // Arrange
+  const sink = SignatureEngine.applied()
+  const questions = [{ question: 'Which database?', header: 'DB', options: [{ label: 'Postgres' }, { label: 'SQLite' }] }]
+  const record = SignatureEngine.stub(on, sink, false)
+  on('tool.call', () => {
+    record.order.push('call')
+    return { result: { questions, answers: { 'Which database?': 'Postgres' } } }
+  })
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await SignatureEngine.ready($, record)
+
+  // Act
+  await $.tool.call({ tool: 'AskUserQuestion', tool_use_id: 'tu-1', questions } as never)
+  for (let index = 0; index < 19; index += 1) await $.prompt.submit({ text: `request number ${index} for the build`, origin: { kind: 'composer' } } as never)
+  await $.turn.complete({ answer: '', text: '', durationMs: 10, isAborted: false, turnId: 't1', reason: 'answer' } as never)
+  await record.written('/journal/')
+
+  // Assert
+  expect(record.order).toEqual(['notice Signature: you usually choose "Postgres"', 'call'])
+  const signal = SignatureEngine.journal(sink).find((item) => item.kind === 'question')
+  expect(JSON.stringify(signal?.data.predicted)).toContain('Postgres')
+})
+
+test('the recall tool call returns the cases as a result', async ($, on) => {
+  // Arrange
+  SignatureEngine.stub(on, SignatureEngine.applied())
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await SignatureEngine.ready($)
+
+  // Act
+  const ran = (await $.tool.call({ tool: 'mcp__podium__recall', situation: 'validate the input and fall back to a default', tags: ['untrusted-input'] } as never)) as unknown as { result: string }
+
+  // Assert
+  expect(ran.result.startsWith('#100 (')).toBe(true)
+})
+
+test('the proxy agent is passed through when Signature applies', async ($, on) => {
+  // Arrange
+  SignatureEngine.stub(on, SignatureEngine.applied())
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await SignatureEngine.ready($)
+
+  // Act
+  const offer = await $.agent.offer({ agent: 'podium:developer-proxy', description: 'Stands in for the developer' } as never)
+
+  // Assert
+  expect(offer).toEqual({ isOffered: true })
+})
+
+test('the proxy agent is hidden when the proxy flag is off', async ($, on) => {
+  // Arrange
+  SignatureEngine.stub(on, SignatureEngine.applied({ apply: { proxy: false } }))
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await SignatureEngine.ready($)
+
+  // Act
+  const offer = await $.agent.offer({ agent: 'podium:developer-proxy', description: 'Stands in for the developer' } as never)
+
+  // Assert
+  expect(offer).toEqual({ isOffered: false })
+})
+
+test('the proxy agent is hidden when Signature is not applying', async ($, on) => {
+  // Arrange
+  SignatureEngine.stub(on, SignatureEngine.sink(''))
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await SignatureEngine.ready($)
+
+  // Act
+  const offer = await $.agent.offer({ agent: 'podium:developer-proxy', description: 'Stands in for the developer' } as never)
+
+  // Assert
+  expect(offer).toEqual({ isOffered: false })
+})
+
+test('the proxy agent is hidden in an excluded session', async ($, on) => {
+  // Arrange
+  SignatureEngine.stub(on, SignatureEngine.applied({ exclude: ['/repo'] }))
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await SignatureEngine.ready($)
+
+  // Act
+  const offer = await $.agent.offer({ agent: 'podium:developer-proxy', description: 'Stands in for the developer' } as never)
+
+  // Assert
+  expect(offer).toEqual({ isOffered: false })
+})
+
+test('the recall tool is registered once and not deferred', async ($, on) => {
+  // Arrange
+  const record = SignatureEngine.stub(on, SignatureEngine.applied())
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await SignatureEngine.ready($)
+
+  // Act
+  const tools = record.tools as { name: string, isDeferred: boolean }[]
+
+  // Assert
+  expect(tools).toHaveLength(1)
+  expect(tools[0]?.name).toBe('recall')
+  expect(tools[0]?.isDeferred).toBe(false)
+})
+
+test('ending the session after a recorded prediction persists the stats into the profile', async ($, on) => {
+  // Arrange
+  const sink = SignatureEngine.applied()
+  const questions = [{ question: 'Which database?', header: 'DB', options: [{ label: 'Postgres' }, { label: 'SQLite' }] }]
+  const record = SignatureEngine.stub(on, sink, false)
+  on('tool.call', () => ({ result: { questions, answers: { 'Which database?': 'Postgres' } } }))
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await SignatureEngine.ready($, record)
+  await $.tool.call({ tool: 'AskUserQuestion', tool_use_id: 'tu-1', questions } as never)
+  record.clock.isAuto = true
+
+  // Act
+  await $.session.end({ reason: 'exit' } as never)
+
+  // Assert
+  const stats = Profile.parse(sink.files?.[`${SignatureEngine.ROOT}/profile.json`] ?? '').stats
+  expect(stats).toEqual({ predictions: 1, hits: 1, missed: 0 })
+})
+
+test('the recall tool is registered after enabling when it was not registered at start', async ($, on) => {
+  // Arrange
+  const record = SignatureEngine.stub(on, SignatureEngine.sink(''))
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await SignatureEngine.ready($)
+
+  // Act
+  await SignatureEngine.run((input) => $.command.run(input), 'signature on')
+  if (record.tools.length === 0) await new Promise<void>((resolve) => void record.registered.push(resolve))
+
+  // Assert
+  const tools = record.tools as { name: string, isDeferred: boolean }[]
+  expect(tools).toHaveLength(1)
+  expect(tools[0]?.isDeferred).toBe(false)
+})
+
+test('a failed registration is tried again by the next signature command', async ($, on) => {
+  // Arrange
+  const sink = SignatureEngine.applied()
+  const record = SignatureEngine.stub(on, sink)
+  record.failRegister = 1
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await SignatureEngine.ready($)
+
+  // Act
+  await SignatureEngine.run((input) => $.command.run(input), 'signature resume')
+  if (record.tools.length === 0) await new Promise<void>((resolve) => void record.registered.push(resolve))
+
+  // Assert
+  expect(record.registerCalls).toBe(2)
+  expect(record.tools).toHaveLength(1)
+})
+
+test('the recall tool is not registered again once it has been registered', async ($, on) => {
+  // Arrange
+  const record = SignatureEngine.stub(on, SignatureEngine.applied())
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await SignatureEngine.ready($, record)
+
+  // Act
+  await SignatureEngine.run((input) => $.command.run(input), 'signature resume')
+  await SignatureEngine.run((input) => $.command.run(input), 'signature on')
+
+  // Assert
+  expect(record.registerCalls).toBe(1)
 })

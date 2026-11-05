@@ -1,4 +1,6 @@
 import { Cases, type Case, type Scope } from './cases'
+import { CaseMerger } from './merger'
+import { Sanitizer } from './sanitizer'
 import { Vocabulary } from './vocabulary'
 
 export type Facet5 = 'what' | 'when' | 'depth' | 'tradeoff' | 'blind-spot'
@@ -17,8 +19,23 @@ export type ProfileData = { version: 1, updatedAt: string, synthesizedAt: number
 
 export type LensSummary = { lens: string, strength: number, summary: string, blindSpot: string }
 
+export type SectionInput = { stack: readonly string[], projectId: string }
+
+export type Prediction = { question: string, label: string, score: number }
+
 export class Profile {
   static readonly MAX_TRAITS = 200
+  static readonly SECTION_CHARS = 2500
+  static readonly CONTEXT_CHARS = 1200
+  private static readonly SECTION_TITLE = '# How this developer works (Podium Signature)'
+  private static readonly SECTION_RULE = "Learned from their own sessions and commits. The project's CLAUDE.md, rules and manifest override everything here. Never lower a safety measure because of this profile."
+  private static readonly SECTION_BLIND = 'Blind spots to cover for them: '
+  private static readonly SECTION_RECALL = 'Use the recall tool (mcp__podium__recall) before a decision with real alternatives.'
+  private static readonly CONTEXT_HEADER = 'Developer precedents (Podium Signature; project instructions override these):'
+  private static readonly PER_LINE = 3
+  private static readonly MAX_LINE = 300
+  private static readonly PREDICT_MIN = 0.3
+  private static readonly PREDICT_MARGIN = 1.5
   private static readonly MAX_CASES = 50
   private static readonly MAX_STATEMENT = 200
   private static readonly MIN_STATEMENT = 8
@@ -29,8 +46,6 @@ export class Profile {
   private static readonly DUE_AGE = 7 * 24 * 60 * 60 * 1000
   private static readonly ID = /^[a-z0-9-]{1,32}\.[a-z0-9-]{1,64}$/
   private static readonly DATE = /^\d{4}-\d{2}-\d{2}$/
-  private static readonly SCRIPT = /(?![A-Za-zßæœøẞÆŒØ])\p{L}/u
-  private static readonly MARKS = /\p{M}/gu
   private static readonly FACETS: readonly Facet5[] = ['what', 'when', 'depth', 'tradeoff', 'blind-spot']
   private static readonly SCOPES: readonly Scope[] = ['global', 'stack', 'project']
   private static readonly STATUSES: readonly TraitStatus[] = ['observed', 'confirmed', 'rejected', 'stale']
@@ -182,6 +197,137 @@ export class Profile {
       })
   }
 
+  static section(profile: ProfileData, input: SectionInput, hasRecall = false): string {
+    try {
+      const eligible = Profile.eligibleTraits(profile, input)
+      const by = (a: Trait, b: Trait) => b.confidence - a.confidence || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
+      const groups = new Map<string, Trait[]>()
+      for (const trait of eligible.filter((item) => !item.isBlindSpot).sort(by)) groups.set(trait.lens, [...(groups.get(trait.lens) ?? []), trait])
+      const lines = [...groups.entries()]
+        .sort(([a], [b]) => Profile.rank(a) - Profile.rank(b) || (a < b ? -1 : a > b ? 1 : 0))
+        .map(([lens, traits]) => `${Profile.label(lens)}: ${Profile.joinStatements(traits)}.`)
+      const blind = eligible.filter((item) => item.isBlindSpot).sort(by)
+      const blindLine = blind.length === 0 ? [] : [`${Profile.SECTION_BLIND}${Profile.joinStatements(blind)}.`]
+      const body = [...lines, ...blindLine]
+      if (body.length === 0) return ''
+      const head = [Profile.SECTION_TITLE, Profile.SECTION_RULE]
+      const tail = hasRecall ? ['', Profile.SECTION_RECALL] : []
+      for (let count = body.length; count > 0; count -= 1) {
+        const text = [...head, '', ...body.slice(0, count), ...tail].join('\n')
+        if (text.length <= Profile.SECTION_CHARS) return text
+      }
+      return ''
+    } catch {
+      return ''
+    }
+  }
+
+  static qualifying(profile: ProfileData, input: SectionInput): number {
+    try {
+      return Profile.eligibleTraits(profile, input).length
+    } catch {
+      return 0
+    }
+  }
+
+  static contextBlock(cases: readonly Case[], blindSpots: readonly Trait[]): string {
+    try {
+      if (!Array.isArray(cases) || cases.length === 0) return ''
+      const safe = cases.filter((item) => Profile.isSafe(item.situation) && Profile.isSafe(item.choice))
+      if (safe.length === 0) return ''
+      const bullets = safe.map((item) => {
+        const times = item.evidenceCount === 1 ? '1 time' : `${item.evidenceCount} times`
+        const confirmed = item.isConfirmedByUser || item.status === 'confirmed' ? ', confirmed' : ''
+        const line = `- When ${Profile.lowerFirst(Sanitizer.flat(item.situation))}: ${Profile.stripPeriods(Sanitizer.flat(item.choice))} (${times}${confirmed}).`
+        return line.length > Profile.MAX_LINE ? `${line.slice(0, Profile.MAX_LINE - 1)}…` : line
+      })
+      const spots = (Array.isArray(blindSpots) ? blindSpots : []).filter((trait) => Profile.isSafe(trait.statement)).slice(0, 2).map((trait) => Profile.stripPeriods(Sanitizer.flat(trait.statement)))
+      const reminder = spots.length === 0 ? [] : [`Reminder: ${spots.join('; ')}.`]
+      const lines = [...bullets, ...reminder]
+      for (let count = lines.length; count > 0; count -= 1) {
+        const text = [Profile.CONTEXT_HEADER, ...lines.slice(0, count)].join('\n')
+        if (text.length <= Profile.CONTEXT_CHARS) return text
+      }
+      return ''
+    } catch {
+      return ''
+    }
+  }
+
+  static predict(question: string, options: readonly string[], cases: readonly { value: Case, score: number }[]): Prediction | undefined {
+    try {
+      if (!Array.isArray(options) || options.length < 2 || !Array.isArray(cases)) return undefined
+      const top = cases.reduce((max, item) => Math.max(max, Number(item.score) || 0), 0)
+      if (top <= 0) return undefined
+      const scored = options
+        .filter((label): label is string => typeof label === 'string' && label.trim() !== '')
+        .map((label) => ({
+          label,
+          value: cases.reduce((best, item) => Math.max(best, CaseMerger.choiceSimilarity(label, item.value.choice) * ((Number(item.score) || 0) / top)), 0)
+        }))
+        .sort((a, b) => b.value - a.value)
+      const first = scored[0]
+      const second = scored[1]
+      if (first === undefined || second === undefined) return undefined
+      if (first.value < Profile.PREDICT_MIN || first.value < Profile.PREDICT_MARGIN * second.value) return undefined
+      return { question, label: first.label, score: first.value }
+    } catch {
+      return undefined
+    }
+  }
+
+  static record(profile: ProfileData, predicted: number, hits: number, missed: number): ProfileData {
+    const stats = profile.stats
+    return {
+      ...profile,
+      stats: {
+        predictions: stats.predictions + Profile.count(predicted),
+        hits: stats.hits + Profile.count(hits),
+        missed: stats.missed + Profile.count(missed)
+      }
+    }
+  }
+
+  static fidelity(profile: ProfileData): number {
+    const { predictions, hits } = profile.stats
+    return predictions > 0 ? Math.min(1, Math.max(0, hits / predictions)) : 0
+  }
+
+  private static isSafe(text: string): boolean {
+    return typeof text === 'string' && Sanitizer.isQuotable(text) && !Cases.isUnsafe(text) && !Cases.isForeign(text)
+  }
+
+  private static eligibleTraits(profile: ProfileData, input: SectionInput): Trait[] {
+    const stack = Array.isArray(input.stack) ? input.stack : []
+    return profile.traits
+      .filter((trait) => Profile.isEligible(trait, stack) && Profile.isSafe(trait.statement))
+      .map((trait) => ({ ...trait, statement: Sanitizer.flat(trait.statement) }))
+  }
+
+  private static isEligible(trait: Trait, stack: readonly string[]): boolean {
+    if (trait.defaultCovered || trait.status !== 'confirmed') return false
+    if (trait.scope === 'global') return true
+    return trait.stack !== '' && stack.includes(trait.stack)
+  }
+
+  private static label(lens: string): string {
+    return lens === 'dx' ? 'DX' : `${lens.charAt(0).toUpperCase()}${lens.slice(1)}`
+  }
+
+  private static joinStatements(traits: readonly Trait[]): string {
+    return traits.slice(0, Profile.PER_LINE).map((trait) => Profile.lowerFirst(Profile.stripPeriods(trait.statement))).join('; ')
+  }
+
+  private static stripPeriods(text: string): string {
+    return text.trim().replace(/\.+$/, '')
+  }
+
+  private static lowerFirst(text: string): string {
+    const trimmed = Profile.stripPeriods(text)
+    const second = trimmed.charAt(1)
+    return trimmed === '' || second === second.toUpperCase() && second !== second.toLowerCase() ? trimmed : `${trimmed.charAt(0).toLowerCase()}${trimmed.slice(1)}`
+  }
+
   private static rank(lens: string): number {
     const index = Profile.LENS_ORDER.indexOf(lens)
     return index === -1 ? Profile.LENS_ORDER.length : index
@@ -218,8 +364,8 @@ export class Profile {
   private static incoming(raw: unknown, byId: ReadonlyMap<number, Case>): Trait | undefined {
     const trait = Profile.trait(raw, true)
     if (trait === undefined) return undefined
-    if (Cases.isUnsafe(trait.statement) || Profile.isForeign(trait.statement)) return undefined
-    return { ...trait, cases: trait.cases.filter((id) => byId.has(id)), status: 'observed', isNew: true }
+    if (Cases.isUnsafe(trait.statement) || Cases.isForeign(trait.statement) || Sanitizer.isInjection(trait.statement)) return undefined
+    return { ...trait, statement: Sanitizer.flat(trait.statement), cases: trait.cases.filter((id) => byId.has(id)), status: 'observed', isNew: true }
   }
 
   private static trait(raw: unknown, isModel: boolean): Trait | undefined {
@@ -253,10 +399,6 @@ export class Profile {
 
   private static isLens(lens: string): boolean {
     return lens === 'other' || Vocabulary.isName(lens)
-  }
-
-  private static isForeign(text: string): boolean {
-    return Profile.SCRIPT.test(text.normalize('NFKD').replace(Profile.MARKS, ''))
   }
 
   private static isRecord(value: unknown): value is Record<string, unknown> {
