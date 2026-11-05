@@ -7,6 +7,8 @@
 
 **Conduct Claude Code like an orchestra.** Podium sets up a repository so that the main thread plans and delegates, model-tiered experts work in parallel, verification mirrors CI and history stays clean. `/podium-stage` then shows that flow live in a side panel.
 
+Optional and off by default, **Signature** can learn from your sessions how you work, on your machine, under your control.
+
 ## Install
 
 ```

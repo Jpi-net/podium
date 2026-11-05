@@ -40,6 +40,8 @@ In the desktop app: click **+** next to the prompt box, then **Plugins**, **Add 
 - `git --no-optional-locks` with `rev-parse` (HEAD, branch name, git dir), `status --porcelain`, `rev-list --count` and `--left-right --count` against `origin/<base>`, `symbolic-ref refs/remotes/origin/HEAD`, `for-each-ref refs/remotes/origin/`, `branch -a --list`, and `grep -l` (only when the project manifest enables a data-isolation check);
 - `uname -m`, to know the CPU architecture.
 
+Only when you enable [Signature](#signature-opt-in), it also runs `git rev-parse --show-toplevel`, `git config --get remote.origin.url` and `git ls-files`, to know which repository and stack a session belongs to.
+
 It never runs a git command that writes, fetches or pushes.
 
 It reads:
@@ -58,7 +60,9 @@ It sends desktop notifications when they are enabled (`/podium-stage notify off`
 
 It stores its own settings (fps, notifications, accessory, time per work item) in Claude Code's plugin store.
 
-**Nothing leaves the machine**: no network access, no telemetry.
+**It writes nothing else, unless you enable Signature**: then it writes only under `~/.claude/podium/` (or `$CLAUDE_CONFIG_DIR/podium/`): your settings choices and the journal of recorded signals (see [Signature](#signature-opt-in)). The plugin cannot delete files, so `erase` empties them; you can delete the folder by hand.
+
+**Nothing leaves the machine**: no network access, no telemetry. Podium has no server. If you later enable learning, selected excerpts are sent to Claude through your own session, as the opt-in screen says; nothing goes anywhere else.
 
 **Events it hooks.** The panel only observes Claude Code: it never changes, blocks or answers anything but its own two commands.
 
@@ -66,7 +70,8 @@ It stores its own settings (fps, notifications, accessory, time per work item) i
 |---|---|
 | `session.start` | registers `/podium` and `/podium-stage`, loads the project's `.claude/`, opens the panel |
 | `command.run` for `/podium` and `/podium-stage` only | answers its own commands; other commands are not touched |
-| `tool.call`, `agent.spawn`, `turn.complete`, `prompt.submit` | records what happened to draw the flow, then passes the event on unchanged |
+| `tool.call`, `agent.spawn`, `turn.complete`, `prompt.submit` | records what happened to draw the flow, then passes the event on unchanged; with Signature enabled, also notes the masked decisions it lists below |
+| `session.end` | with Signature enabled, writes the signals of the session to the journal, then passes the event on unchanged |
 | `session.attach`, `ui.close` | places or forgets the panel, then passes the event on unchanged |
 | `ui.render` for its own panel | draws the panel |
 
@@ -133,7 +138,7 @@ Without a manifest the panel still works: roles are guessed from command names, 
 
 ## /podium-stage
 
-`/podium-stage [flow|delivery|history|context|tools]` opens the panel; keys `1` to `5` switch views when it has focus.
+`/podium-stage [flow|delivery|history|context|tools|signature]` opens the panel; keys `1` to `6` switch views when it has focus.
 
 The panel opens by itself only in a project that has a `.claude/podium.json` (after `/podium`). Anywhere else it stays closed until you run `/podium-stage`, so installing the plugin for every project adds nothing to repositories that do not use it. Closing it keeps it closed for the session.
 
@@ -143,6 +148,8 @@ The panel opens by itself only in a project that has a `.claude/podium.json` (af
 4. **Context**: branch and base, warnings, time spent on the work item, tokens per model.
 5. **Tools**: the next recommended step with the project command that does it, then every command of the session grouped by project, plugins and MCP, each with its role; clicking one puts it in the prompt. Also the project's agents with their model and phase.
 
+6. **Signature** (opt-in, off by default): see [Signature](#signature-opt-in).
+
 Other arguments: `accessory [name|list]` (the avatar wears a random accessory each session, among 41), `quad|half|auto`, `fps <10-60>`, `recap`, `notify on|off`, `reset`, `disco`.
 
 The panel only observes: it never blocks or changes a tool call.
@@ -150,6 +157,65 @@ The panel only observes: it never blocks or changes a tool call.
 ### Effects
 
 The scene reacts to the work: rain on the office window under a grey sky while verification fails, a rainbow outside when it turns green, a sky that follows the time of day, and seasonal and event decor (indoors and behind the glass).
+
+## Signature (opt-in)
+
+Signature lets Podium learn how you decide, build and care about security, so that it can bring that to every project. It is **off by default**: until you choose, nothing is recorded.
+
+While you have not chosen, a new interactive session introduces it at most once every 24 hours: if the panel is open it switches to the **Signature** tab (key `6`) and shows the opt-in screen, otherwise a toast says "Podium can learn how you work. Open /podium-stage signature to choose." You can open the tab yourself at any time with `/podium-stage signature`. The screen says what is recorded, what never is, where it is stored and what is sent to Claude, and gives one switch per capability:
+
+- learn from my sessions;
+- read the history of the repositories I open;
+- read my past Claude Code sessions once;
+- learn in the background when idle;
+- bring my profile into every session.
+
+Choose **Enable**, **Not now** (it does not introduce itself again for 7 days) or **Never ask** (`/podium-stage signature on` changes your mind later). In this release the panel records your sessions and shows what it holds; learning from the history and applying a profile arrive in later releases and use the switches you chose here.
+
+### What is recorded
+
+From interactive sessions in a folder that is not excluded, once you enable it:
+
+- your prompts, masked, cut to their first 400 characters (for a slash command, only its arguments), with their length and language (French, English or other), and whether they look like a correction or follow an interruption;
+- your answers to Claude's questions: the question and its options, the one you chose or your own words, masked;
+- plans you accept or refuse: an excerpt of the plan (first 1500 characters, masked), your feedback (masked) and whether you edited it;
+- interruptions;
+- which subagent types and models are used;
+- the project the session belongs to: its folder name, a short hash of its git remote (not the remote itself) and up to three main stack tags.
+
+Masking replaces secrets before anything is written: private keys, tokens and API keys, passwords and secret values, credentials in URLs, email addresses, your home folder path, and long opaque blobs.
+
+### What is never recorded
+
+File contents, tool outputs, diffs, shell command lines (only the slash command name is kept), images and attachments, the prompts of subagents, and Claude's own answers (only the questions it asks you and the plan you accept or refuse are kept, masked). Sessions started without a terminal conversation (`claude -p`, SDK runs) are never recorded. Nothing is recorded while Signature is paused or declined.
+
+### Where it is stored
+
+On your machine, under `~/.claude/podium/` (or `$CLAUDE_CONFIG_DIR/podium/`): your choices in `settings.json` and one journal file per session in `journal/`. Nothing is written into your projects, and Signature refuses to write through a symbolic link that would lead outside that folder. The files get your system's default permissions; on a computer shared with other accounts, restrict the folder (for example `chmod 700 ~/.claude/podium`).
+
+### Keep a folder out
+
+- Add an empty `.podium-private` file to a folder. Podium looks for it in the session's folder and in each parent up to the git root (only in the session's folder when it is not in a git repository).
+- Or run `/podium-stage signature exclude <folder>`; `include <folder>` undoes it. The folder must be an absolute path or start with `~` (for example `~/clients`); a relative path is refused. It can be a pattern (`*` inside a folder name, `**` across folders).
+
+The tab says when the current folder is excluded and why. An exclusion saved in `settings.json` that is not an absolute path is ignored, and the tab lists it.
+
+### Pause, erase
+
+- `/podium-stage signature pause` stops recording and keeps what is stored; `resume` starts again. Once enabled, the tab also has **Pause** / **Resume** and **Erase…** buttons, and shows what was recorded this session and how much is stored.
+- `/podium-stage signature erase` empties everything Signature stored, including your settings, and sets your choice to declined. It asks you to repeat the same command (or press **Erase…** again) within 30 seconds. The plugin cannot delete files, so the files stay as empty files; delete the `podium` folder by hand to remove them.
+
+### Commands
+
+| Command | Effect |
+| --- | --- |
+| `/podium-stage signature` | open the Signature tab |
+| `/podium-stage signature on` / `off` | enable with the switches as set on the tab, or decline (off) |
+| `/podium-stage signature pause` / `resume` | stop or restart recording, data kept |
+| `/podium-stage signature exclude <folder>` / `include <folder>` | never record in a folder (absolute or `~` path), or lift that |
+| `/podium-stage signature erase` | empty everything stored (repeat to confirm) |
+
+See [PRIVACY.md](https://github.com/Jpi-net/podium/blob/main/PRIVACY.md) for the full policy.
 
 ## Develop
 

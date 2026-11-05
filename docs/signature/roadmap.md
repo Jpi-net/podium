@@ -183,13 +183,137 @@ These need the engine wiring to be exploitable, and must land before any case re
 
 ## Phase 2: Capture, storage and the opt-in screen
 
-| Owner | Files |
-|---|---|
-| panel-expert | `plugin/hooks/signature/signals.ts`, `journal.ts`, `store.ts`, `signature.ts`, `view.tsx`; hooks and tab in `plugin/hooks/register.tsx`; `plugin/types/index.d.ts` (`signature` state key) |
-| test-expert | `plugin/tests/signature-signals.test.ts`, `signature-journal.test.ts`, `signature-store.test.ts`, `signature-view.test.tsx`, `register.test.tsx` additions, fixtures `MemoryFs` |
-| doc-writer | `PRIVACY.md`, `plugin/README.md`, `CHANGELOG.md`, `CONTRIBUTING.md` (layout table) |
-| devops | none |
-| main thread | `.claude/rules/panel.md`, `.claude/CLAUDE.md` review triggers (privacy-security.md, Repository rule changes) |
+### Files and owners
+
+| Wave | Owner | Files |
+|---|---|---|
+| 1 | panel-expert B | prerequisites 1 to 4 and the tagger cap: `cases.ts`, `merger.ts`, `tagger.ts` |
+| 1 | panel-expert A | prerequisite 5 (overlay total cap) in `vocabulary.ts`; new `signals.ts`, `journal.ts` |
+| 1 | panel-expert C | new `store.ts` |
+| 2 | panel-expert D | new `signature.ts`, `view.tsx`; hooks, tab and commands in `plugin/hooks/register.tsx`; `plugin/types/index.d.ts` |
+| 3 | test-expert A | `signature-signals.test.ts`, `signature-journal.test.ts`, `signature-store.test.ts`, `MemoryFs` in `fixtures/signature.ts` |
+| 3 | test-expert B | prerequisite tests in the existing cases, merger, tagger, vocabulary test files; `signature-facade.test.ts`, `signature-view.test.tsx`, `register.test.tsx` additions |
+| 3 | doc-writer | `PRIVACY.md`, `plugin/README.md`, `CHANGELOG.md`, `CONTRIBUTING.md` |
+| 3 | main thread | `.claude/rules/panel.md`, `.claude/CLAUDE.md` (privacy-security.md, Repository rule changes) |
+
+### Engine constraint: no delete
+
+`$.fs` has `read`, `write`, `list`, `exists`, `stat` and no delete. Signature therefore empties files instead of deleting them: an empty file is read as absent everywhere, `erase` writes `''` to every file under the root (then `settings.json` with consent `declined`), a distilled journal file is emptied. Empty files are listed in the tab's storage line and the README tells the developer they can delete the folder by hand.
+
+### Contracts
+
+```ts
+// signals.ts
+export type SignalKind = 'prompt' | 'question' | 'plan' | 'abort' | 'agent' | 'use'
+export type SignalContext = { session: string, project: string, projectId: string, stack: readonly string[], home: string, at: number }
+export type Signal = { v: 1, at: number, session: string, project: string, projectId: string, stack: string[], kind: SignalKind, data: Record<string, unknown> }
+export type PromptInput = { text: string, command: string, args: string, isAfterAbort: boolean }
+export type QuestionInput = { questions: unknown, answers: unknown, response: unknown, afkTimeoutMs: unknown, predicted: Readonly<Record<string, string>> }
+export type PlanInput = { plan: unknown, isRefused: boolean, feedback: string, isEdited: boolean }
+export class SignalExtractor {
+  static language(text: string): 'fr' | 'en' | 'other'
+  static isCorrection(text: string): boolean
+  static prompt(context: SignalContext, input: PromptInput): Signal
+  static questions(context: SignalContext, input: QuestionInput): Signal[]
+  static plan(context: SignalContext, input: PlanInput): Signal
+  static abort(context: SignalContext, turnId: string): Signal
+  static agent(context: SignalContext, type: string, model: string): Signal
+  static use(context: SignalContext, caseIds: readonly number[]): Signal
+  static normalizeRemote(url: string): string
+  static projectId(remoteOrRoot: string): string
+}
+
+// journal.ts
+export class Journal {
+  static readonly MAX_BUFFER: number
+  static readonly FLUSH_AT: number
+  static readonly ROTATE_BYTES: number
+  static push(buffer: readonly Signal[], signal: Signal): { buffer: Signal[], dropped: number }
+  static lines(signals: readonly Signal[]): string
+  static append(existing: string, signals: readonly Signal[]): string
+  static shouldRotate(existingBytes: number, addition: string): boolean
+  static parse(text: string): Signal[]
+}
+
+// store.ts
+export type FsEntryLike = { name: string, kind: 'file' | 'dir' | 'other', size: number, mtimeMs: number }
+export type FsPort = {
+  read: (path: string) => Promise<string>
+  write: (path: string, text: string) => Promise<void>
+  exists: (path: string) => Promise<boolean>
+  list: (path: string) => Promise<FsEntryLike[]>
+  stat: (path: string) => Promise<{ kind: 'file' | 'dir' | 'other', isLink: boolean, realPath: string } | undefined>
+}
+export type RunEntry = { at: number, ok: boolean, tokens: number, cases: number, traits: number, note: string }
+export type StoreState = { version: 1, nextCaseId: number, journal: Record<string, number>, runs: RunEntry[], day: string, tokensToday: number, runsToday: number, backoffUntil: number, lastError: string }
+export type ReadResult<T> = { value: T, isNewer: boolean, isCorrupt: boolean }
+export type Sizes = { indexBytes: number, casesBytes: number, journalBytes: number, emptyFiles: number }
+export class SignatureStore {
+  static text(fs: FsPort, path: string): Promise<string>
+  static readSettings(fs: FsPort, files: SignatureFiles): Promise<ReadResult<Settings> & { dropped: string[] }>
+  static writeSettings(fs: FsPort, files: SignatureFiles, settings: Settings): Promise<boolean>
+  static emptyState(): StoreState
+  static parseState(text: string): StoreState
+  static readState(fs: FsPort, files: SignatureFiles): Promise<ReadResult<StoreState>>
+  static writeState(fs: FsPort, files: SignatureFiles, state: StoreState): Promise<boolean>
+  static flushJournal(fs: FsPort, root: string, session: string, at: number, signals: readonly Signal[], part: number): Promise<{ part: number, written: number }>
+  static readIndex(fs: FsPort, files: SignatureFiles): Promise<ReadResult<TagIndexData | undefined>>
+  static sizes(fs: FsPort, files: SignatureFiles): Promise<Sizes>
+  static resolveRoot(fs: FsPort, root: string): Promise<string>
+  static erase(fs: FsPort, files: SignatureFiles, realRoot: string): Promise<{ emptied: number, isComplete: boolean }>
+}
+
+// signature.ts (facade; static state like Runtime in register.tsx)
+export type GitPort = (argv: readonly string[], cwd: string) => Promise<{ exitCode: number, stdout: string }>
+export type SignaturePorts = { fs: FsPort, git: GitPort, now: () => number, env: (name: string) => string, toast: (text: string) => void, changed: (state: SignatureViewState) => void }
+export type SignatureDraft = { sessions: boolean, history: boolean, pastSessions: boolean, background: boolean, apply: boolean }
+export type SignatureViewState = { consent: Consent, draft: SignatureDraft, isExcluded: boolean, exclusionReason: string, root: string, signals: number, buffered: number, dropped: string[], storage: Sizes, confirmErase: boolean, lastError: string }
+export type StartInput = { cwd: string, session: string, isInteractive: boolean }
+export type PromptEvent = { text: string, command: string, args: string, isUserOrigin: boolean, isMeta: boolean, isNotification: boolean }
+export class Signature {
+  static start(ports: SignaturePorts, input: StartInput): Promise<void>
+  static isCapturing(): boolean
+  static onPrompt(event: PromptEvent): void
+  static onQuestion(input: Omit<QuestionInput, 'predicted'>): void
+  static onPlan(input: PlanInput): void
+  static onTurn(reason: string, agentId: string, turnId: string): void
+  static onAgent(type: string, model: string): void
+  static flush(): Promise<void>
+  static end(): Promise<void>
+  static renew(session: string): Promise<void>
+  static view(): SignatureViewState
+  static toggle(key: keyof SignatureDraft): void
+  static enable(): Promise<string>
+  static notNow(): Promise<string>
+  static never(): Promise<string>
+  static pause(): Promise<string>
+  static resume(): Promise<string>
+  static decline(): Promise<string>
+  static exclude(folder: string): Promise<string>
+  static include(folder: string): Promise<string>
+  static erase(): Promise<string>
+  static command(args: string): Promise<string>
+  static shouldIntroduce(now: number): boolean
+}
+
+// view.tsx
+export type SignatureActions = { toggle: (key: keyof SignatureDraft) => void, enable: () => void, notNow: () => void, never: () => void, pause: () => void, resume: () => void, erase: () => void }
+export class SignatureView {
+  static render(ui: Ui, width: number, state: SignatureViewState, actions: SignatureActions): RenderElement[]
+}
+```
+
+### Behaviour
+
+- `start`: resolve the root (`SignaturePaths.root` from `CLAUDE_CONFIG_DIR`, `HOME`, `USERPROFILE`); empty root, unreadable or newer settings: Signature stays off for the session with the reason in `lastError`. Read settings; when consent is `enabled` and capture is on: git root (`git rev-parse --show-toplevel`), remote (`git config --get remote.origin.url`), `projectId`, stack (extensions of `git ls-files`, capped at 20,000 lines, top three stack tags through `Vocabulary.fromPaths`); exclusion (`isExcluded`, `.podium-private` from the working directory up to the git root, non-interactive session). Each step fails open.
+- Capture rules of `capture.md`; signals buffered with `Journal.push`; flush when the buffer reaches `FLUSH_AT` at a turn end, on `end`, and by a timer every 60 seconds from `register.tsx`; flush never awaited by a gating hook.
+- Opt-in: `shouldIntroduce` is true once per day while consent is `undecided` and the last `notNow` is older than 7 days (`signature.introAt` and `signature.notNowAt` kept in `$.store` by register.tsx). When the panel opens and it is true, the panel opens on the Signature tab once; when the panel is not open, one toast "Podium can learn how you work. Open /podium-stage signature to choose."
+- Commands `/podium-stage signature [on|off|pause|resume|exclude <folder>|include <folder>|erase]`; `erase` needs the same command twice within 30 seconds.
+- Writes are confined by real paths, not only by spelling: `start` resolves the root's real path (`SignatureStore.resolveRoot`), and every write checks that the parent's real path is inside it and that the target is missing or a regular file that is not a link, because `$.fs.write` follows links.
+- `/clear` keeps the process under a new session id without a `session.start`: `session.end` with reason `clear` calls `Signature.renew` with the new id.
+- Signature subcommands that change state run only when the person typed them (command origin `composer`, `bridge` or `person`); bare `signature` opens the tab from anywhere.
+- `register.tsx`: tab `{ id: 'signature', label: 'Signature', short: 'Sign.', hotkey: '6' }`, aliases `signature`, `profile`; `$.state` key `signature` of type `SignatureViewState` declared in `plugin/types/index.d.ts`; hooks call the facade inside `try/catch` and always continue with `next(e)`; `session.end` flushes.
+- Phase 2 records only. The opt-in screen is already the final one of `panel.md` (every switch is stored for the later phases), because the stacked branches are released together once phases 2 to 4 are merged.
 
 Delivers: `SignatureStore` that checks `FormatVersion.isNewer(text, 1)` before parsing or writing any file and refuses to touch a newer file (Signature turns itself off for the session and says why), consent flow, tab with opt-in and an early dashboard (counts only), session capture to the journal, exclusions, commands `signature`, `on`, `off`, `pause`, `resume`, `exclude`, `include`, `erase`. Reviews: code-reviewer, security-reviewer, doc-writer.
 
@@ -199,6 +323,10 @@ Delivers: `SignatureStore` that checks `FormatVersion.isNewer(text, 1)` before p
 |---|---|
 | panel-expert | `history.ts`, `prompts.ts`, `learner.ts`, `profile.ts` (merge and synthesis parts); idle scheduling in `signature.ts` |
 | test-expert | tests with `ScriptedModel` and `ScriptedGit` fixtures: full run on a fixture repository, budget stop, lock contention, backoff, corrupt files, unsafe model output |
+
+Also in phase 3: a `turn` signal carrying the main thread's redacted turn text (600 characters) recorded only when the next prompt is a correction or follows an abort, which the refusal extraction of `learning.md` pairs with that prompt (phase 2 does not record it); the dashboard hint "Signature only records for now" and the README sentence about this release replaced together.
+
+Phase 3 security notes carried from the phase 2 review: the keyword safety floor still keeps "Leaves the tests unrun", "Tests are optional", "Lets CI stay red" (accepted limit of a keyword check; the learner's synthesis contract must restate P4 so the model never proposes such traits); plan feedback should be kept only when the tool error matches the engine's own rejection wording, since a settings-level hook that blocks ExitPlanMode can put its own text there; the engine offers no file mode on `$.fs.write` and no hard-link count, so the time-of-check gap of the write guard is a known limit.
 
 Delivers: background runs, current-repository research, `/podium-stage learn <path>`, `learn-now`, `rebuild`, `forget`, review list in the tab, toasts. Reviews: code-reviewer, security-reviewer (prompt injection, git argv), doc-writer.
 

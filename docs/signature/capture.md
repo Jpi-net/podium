@@ -6,7 +6,7 @@ Capture runs only when `consent` is `enabled`, `capture.sessions` is true and th
 
 ### Prompt
 
-Source: `prompt.submit`, when `e.origin` is the user's own (not a plugin, not a peer, not a notification), `e.isMeta` is not set, and the text is not a task notification (`Flow.isTaskNotification`).
+Source: `prompt.submit`, after `next(e)` and only when the prompt entered (not dropped by a hook), when `e.origin` is the person's own (`composer` or `bridge`; not a plugin, a peer or a notification), `e.isMeta` is not set, the text is not a task notification (`Flow.isTaskNotification`) and does not start with `!` (shell mode).
 
 | Field | Extraction |
 |---|---|
@@ -34,7 +34,7 @@ For each question in `ran.result.questions`:
 | `isOther`, `other` | the answer matches no label: free text, redacted, truncated to 300 |
 | `predicted` | the label Signature predicted before the dialog, if any |
 
-Questions of kind `text` or `number` are recorded with `options: []` and the answer in `other`.
+Questions of kind `text` or `number` are recorded with `options: []` and the answer in `other`. Free text the person typed instead of picking an option arrives as `ran.result.response` (a string): it is recorded in `other` with `isOther: true` for the question that has no entry in `answers`.
 
 ### Plan
 
@@ -43,8 +43,8 @@ Source: `tool.call` with `e.tool === 'ExitPlanMode'`, after `await next(e)`.
 | Field | Extraction |
 |---|---|
 | `outcome` | `refused` when `ran.deny` is set or `ran.isError` is true, else `accepted` |
-| `excerpt` | `e.plan` (input) first 1,500 characters, redacted |
-| `feedback` | the deny text or the error text, 600 characters, redacted |
+| `excerpt` | the plan (input, or `ran.result.plan`) first 1,500 characters, redacted |
+| `feedback` | the person's rejection text (`ran.text` when `ran.isError`), 600 characters, redacted; empty when the refusal came from a hook or a permission rule (`ran.deny`), which is not the person's judgment |
 | `isEdited` | `ran.result.planWasEdited === true` |
 
 ### Abort
@@ -93,6 +93,8 @@ A session captures nothing when:
 3. a `.podium-private` file exists in the working directory or an ancestor up to the git root;
 4. the session is non-interactive (`e.isInteractive === false` at `session.start`), which keeps `claude -p` scripts and SDK runs out.
 
+`.podium-private` is looked for from the working directory up to the git root, comparing real paths (links resolved, so case or link differences cannot skip it), and always in the git root itself; an error while checking excludes the folder.
+
 Exclusion is decided once at `session.start` and shown in the tab ("Not learning here: excluded by ~/clients/**").
 
 ## What is never captured
@@ -101,4 +103,4 @@ Tool outputs, file contents, diffs of edits, command lines other than the slash 
 
 ## Buffering and flushing
 
-Signals go to an in-memory buffer (at most 500; beyond, the oldest are dropped and counted). Flush, fire and forget, when the buffer holds 20 signals at `turn.complete`, on idle, and at `session.end`. A flush reads the session file (absent: empty), appends the lines and writes it back; above 512 KiB it continues in `<session>.1.jsonl`.
+Signals go to an in-memory buffer (at most 500; beyond, the oldest are dropped and counted, and the count is shown in the tab). Flush, fire and forget, when the buffer holds 20 signals at `turn.complete`, on idle, and at `session.end`. A flush reads the session file (absent: empty), appends the lines and writes it back; above 512 KiB it continues in `<session>.1.jsonl`.

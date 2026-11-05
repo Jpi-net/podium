@@ -129,7 +129,8 @@ Several Claude Code sessions can run at once on one machine.
 | Failure | Behaviour |
 |---|---|
 | Data directory not writable | Signature turns itself off for the session, the tab says why |
-| Corrupt JSON in any file | the file is renamed `<name>.corrupt-<timestamp>` and rebuilt from the layer below (index from cases, profile from cases) |
+| Corrupt JSON in any file | its text is copied to `<name>.corrupt-<timestamp>` (the engine has no rename) and the file is rebuilt from the layer below (index from cases, profile from cases), or rewritten with defaults (settings, state) |
+| A file written by a newer Podium (`version` above the known one) | left untouched; Signature turns itself off for the session and the tab says why. Only `erase` empties it, because erasing is the developer's privacy action |
 | A JSONL line that does not parse | skipped and counted in the run report |
 | Model call not answered | the batch stays pending; the run stops; next attempt after the backoff (1 h, 4 h, 24 h) |
 | Model answer not valid JSON or failing validation | the batch is retried once with a stricter instruction, then skipped and logged |
