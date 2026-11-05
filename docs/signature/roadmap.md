@@ -10,7 +10,7 @@ No user-visible change, so no README or CHANGELOG entry yet. Everything is pure 
 
 | Wave | Owner | Files |
 |---|---|---|
-| 1 | panel-expert A | `plugin/hooks/signature/paths.ts`, `settings.ts`, `redactor.ts`, `vocabulary.ts` |
+| 1 | panel-expert A | `plugin/hooks/signature/paths.ts`, `settings.ts`, `redactor.ts`, `vocabulary.ts`, `format-version.ts` |
 | 1 | panel-expert B | `plugin/hooks/signature/cases.ts`, `tag-index.ts`, `ranker.ts`, `tagger.ts`, `merger.ts` |
 | 2 | test-expert A | `plugin/tests/signature-paths.test.ts`, `signature-settings.test.ts`, `signature-redactor.test.ts`, `signature-vocabulary.test.ts` |
 | 2 | test-expert B | `plugin/tests/signature-cases.test.ts`, `signature-index.test.ts`, `signature-ranker.test.ts`, `signature-tagger.test.ts`, `signature-merger.test.ts`, `plugin/tests/fixtures/signature.ts` |
@@ -53,6 +53,13 @@ export class SignatureSettings {
   static isActive(settings: Settings): boolean
   static matches(glob: string, path: string, home: string): boolean
   static isExcluded(settings: Settings, path: string, home: string): boolean
+  static dropped(text: string): string[]
+}
+
+// format-version.ts
+export class FormatVersion {
+  static of(text: string): number
+  static isNewer(text: string, known: number): boolean
 }
 
 // redactor.ts
@@ -92,7 +99,7 @@ export type Case = {
   id: number, situation: string, options: string[], choice: string, why: string, tags: string[]
   scope: Scope, project: string, projectId: string, projects: string[], stack: string, kind: CaseKind
   confidence: number, evidenceCount: number, evidence: string[], counterCount: number
-  status: CaseStatus, isConfirmedByUser: boolean, firstSeen: string, lastSeen: string
+  status: CaseStatus, statusAt: string, isConfirmedByUser: boolean, firstSeen: string, lastSeen: string
   uses: number, hits: number, defaultCovered: boolean, extractor: string, vocabulary: number
 }
 export type ExtractedCase = { situation: string, options: string[], choice: string, why: string, tags: string[], kind: CaseKind, evidence: string[] }
@@ -120,6 +127,7 @@ export class TagIndex {
   static build(cases: readonly Case[]): TagIndexData
   static add(index: TagIndexData, value: Case): TagIndexData
   static remove(index: TagIndexData, id: number, tags: readonly string[]): TagIndexData
+  static contains(index: TagIndexData, tag: string, id: number): boolean
   static parse(text: string): TagIndexData | undefined
   static serialize(index: TagIndexData): string
 }
@@ -144,7 +152,7 @@ export class SituationTagger {
 }
 
 // merger.ts
-export type MergeContext = { nextId: number, today: string, project: string, projectId: string, stack: string, extractor: string, vocabularyRevision: number, isProjectBatch: boolean }
+export type MergeContext = { nextId: number, today: string, project: string, projectId: string, stack: string, extractor: string, vocabularyRevision: number, isProjectBatch: boolean, allowedEvidence: readonly string[] }
 export type MergeResult = { cases: Case[], nextId: number, added: number[], reinforced: number[], contradicted: number[], dropped: number }
 export class CaseMerger {
   static tagSimilarity(vocabulary: VocabularyData, a: readonly string[], b: readonly string[]): number
@@ -162,6 +170,17 @@ Semantics are those of `data-model.md`, `capture.md` (Redaction), `learning.md` 
 - All contracts implemented, no free functions, no comments.
 - Tests pin: one positive and one negative case per redaction rule; settings tolerance (garbage, wrong types, out of range, missing file text `''`); glob semantics (`*`, `**`, `?`, `~`, prefix directory, Windows separators); vocabulary alias matching with accents and word boundaries, path patterns, cycle-safe ancestors, overlay validation; model output parsing with prose around the JSON, nested braces in strings, invalid cases dropped with reasons, unsafe cases dropped, tags normalised; JSONL last-line-wins and tombstones; index add/remove consistency with `build`; ranking examples of `retrieval.md`; merge table of `learning.md`; archive selection.
 
+### Prerequisites carried to phase 2 (from the phase 1 security reviews)
+
+These need the engine wiring to be exploitable, and must land before any case reaches a prompt:
+
+1. `isUnsafe`: a positive verb (run, write, add, require, execute) is negated when any negator (never, not, no longer, dont, doesnt, hardly, seldom, rarely) appears earlier in the same clause within 64 characters, clauses cut at `. ; ! ?` only ("Never actually runs the test suite", "Do not, under any circumstances, run the tests", "Hardly ever runs the tests" must be dropped).
+2. Script check: NFKD, strip combining marks, then every letter must be `[A-Za-z]` or in a short allow-list (ß æ œ ø), so Latin look-alikes ("ꜱkip", "Skıp", "teʂts") are dropped.
+3. `MergeContext.allowedEvidence` becomes required and filters whenever it is an array, even empty; the learner always passes the batch's ids.
+4. An evidence id counts toward at most one case per merge (or a case gains at most 5 evidence per run).
+5. Overlay: cap the total number of patterns at 200; the tagger caps passed-in paths at 20.
+6. `SignatureStore` writes cursors in the same step as the cases of their batch.
+
 ## Phase 2: Capture, storage and the opt-in screen
 
 | Owner | Files |
@@ -172,7 +191,7 @@ Semantics are those of `data-model.md`, `capture.md` (Redaction), `learning.md` 
 | devops | none |
 | main thread | `.claude/rules/panel.md`, `.claude/CLAUDE.md` review triggers (privacy-security.md, Repository rule changes) |
 
-Delivers: consent flow, tab with opt-in and an early dashboard (counts only), session capture to the journal, exclusions, commands `signature`, `on`, `off`, `pause`, `resume`, `exclude`, `include`, `erase`. Reviews: code-reviewer, security-reviewer, doc-writer.
+Delivers: `SignatureStore` that checks `FormatVersion.isNewer(text, 1)` before parsing or writing any file and refuses to touch a newer file (Signature turns itself off for the session and says why), consent flow, tab with opt-in and an early dashboard (counts only), session capture to the journal, exclusions, commands `signature`, `on`, `off`, `pause`, `resume`, `exclude`, `include`, `erase`. Reviews: code-reviewer, security-reviewer, doc-writer.
 
 ## Phase 3: Learning
 

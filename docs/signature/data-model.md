@@ -18,7 +18,9 @@
 └── history/<repo-id>.json     research cursor per repository          written by the learner
 ```
 
-Every JSON file has a `version` field. A reader that meets a higher major version than it knows leaves the file alone and turns Signature off for the session, saying so in the tab.
+Every JSON file has a `version` field. Before parsing or overwriting a file, the store checks `FormatVersion.isNewer(text, known)`; a reader that meets a higher major version than it knows leaves the file alone and turns Signature off for the session, saying so in the tab.
+
+The root must be absolute (`/…`, `X:/…` or a `//server/share` UNC path; a leading `~` in `CLAUDE_CONFIG_DIR` is expanded). A relative root disables Signature, so data can never land inside a project.
 
 ## settings.json
 
@@ -58,7 +60,9 @@ Every JSON file has a `version` field. A reader that meets a higher major versio
 
 A folder is also excluded when it or an ancestor up to the repository root contains a file named `.podium-private`.
 
-Parsing is tolerant: unknown keys are dropped, a wrong type or an out-of-range value takes the default, a missing file means `undecided`.
+Parsing is tolerant: unknown keys are dropped, a wrong type takes the default, a number out of range is clamped to the range (`runsPerDay` 0 to 24, `tokensPerDay` 0 to 5,000,000, `idleMinutes` 3 to 120, `halfLifeMonths` 1 to 120), a missing file means `undecided`. `exclude` keeps only absolute patterns or patterns starting with `~`.
+
+Exclusion globs: `*` and `?` stay within a path segment, `**` crosses segments, `dir/**` matches `dir` itself and everything below, `a/**/b` matches `a/b`, a pattern that matches a folder also excludes everything inside it; matching is case-insensitive and Unicode-normalised (NFC), `~` is expanded, separators are normalised. The matcher uses no regular expression and its cost is bounded by pattern length times path length (globs capped at 256 characters, paths at 4,096), so no pattern can stall a session. `$HOME`, `${HOME}` and `%USERPROFILE%` prefixes are expanded like `~`; other relative entries are dropped and listed in the tab (`SignatureSettings.dropped`).
 
 ## Signal (journal line)
 
@@ -97,6 +101,7 @@ Parsing is tolerant: unknown keys are dropped, a wrong type or an out-of-range v
   "evidence": ["commit:podium:a1b2c3d", "session:cba7…:1762300000000"],
   "counterCount": 0,
   "status": "confirmed",
+  "statusAt": "2026-10-28",
   "isConfirmedByUser": true,
   "firstSeen": "2026-08-12",
   "lastSeen": "2026-10-28",
@@ -120,6 +125,7 @@ Parsing is tolerant: unknown keys are dropped, a wrong type or an out-of-range v
 | `confidence` | 0 to 1, see `learning.md`, Confidence |
 | `evidence` | at most 5, most recent first; `evidenceCount` keeps the total |
 | `status` | `observed`, `confirmed`, `rejected`, `stale` |
+| `statusAt` | date of the last status change; archival ages rejected and stale cases from it |
 | `uses`, `hits` | times retrieved for a prediction, times the prediction matched |
 
 A later line with the same `id` replaces the earlier one (append-and-compact, see Compaction). A line `{ "id": 142, "deleted": true }` is a tombstone.
@@ -160,7 +166,7 @@ Base vocabulary in code (`Vocabulary.BASE`), overlay in `vocabulary.json`:
 { "version": 1, "revision": 3, "tags": { "idempotency": { "facet": "concept", "parent": "robustness", "aliases": ["idempotent", "safe to retry"], "paths": [] } }, "candidates": { "feature-flag": 2 } }
 ```
 
-A tag: `facet` (`lens`, `concept`, `artifact`, `stack`, `phase`, `decision`), optional `parent` (another tag), `aliases` (lower-case phrases, English and French), optional `paths` (JavaScript regex sources tested against `/`-separated relative paths). Canonical names are lower-case kebab-case, at most 32 characters.
+A tag: `facet` (`lens`, `concept`, `artifact`, `stack`, `phase`, `decision`), optional `parent` (another tag), `aliases` (lower-case phrases, English and French), optional `paths` (pattern sources tested against `/`-separated relative paths). Patterns are limited to a safe subset (literals, `\.`, anchors `^` `$`, `(^|/)`, at most one unquantified alternation of distinct literals, at most two `?` each after one literal character, at most one `.*`); any other source in the overlay is dropped, the overlay holds at most 200 tags and 8 patterns per tag, and only the first 200 characters of a path are tested, so a hand-edited or imported `vocabulary.json` cannot stall matching. Canonical names are lower-case kebab-case, at most 32 characters.
 
 ### Base vocabulary (version 1)
 
@@ -172,12 +178,14 @@ A tag: `facet` (`lens`, `concept`, `artifact`, `stack`, `phase`, `decision`), op
 | concept, robustness | `fail-open` [robustness], `fail-closed` [robustness], `error-handling` [robustness], `idempotency` [robustness], `concurrency` [robustness], `backward-compat` [robustness], `migration` [robustness], `cross-platform` [robustness] |
 | concept, testing | `test-first` [testing], `regression-test` [testing], `test-structure` [testing], `fixtures` [testing], `coverage` [testing], `e2e` [testing] |
 | concept, performance | `caching` [performance], `hot-path` [performance], `memory` [performance], `latency` [performance] |
-| concept, git | `commit-format` [git], `commit-granularity` [git], `branching` [git], `pull-request` [git], `ai-attribution` [git], `history-safety` [git], `release` [git] |
+| concept, git | `commit-format` [git], `commit-granularity` [git], `branching` [git], `pull-request` [git], `ai-attribution` [git], `history-safety` [git] |
 | concept, dx and product | `automation` [dx], `minimal-surface` [dx], `discoverability` [dx], `defaults` [dx], `consent` [product], `scope-control` [product], `user-language` [ux], `privacy` [data] |
 | artifact | `hook`, `cli`, `api`, `ui`, `db-schema`, `config`, `ci`, `dependency`, `docs-file`, `test-file`, `prompt`, `agent`, `skill`, `manifest`, `build` |
 | stack | `node`, `typescript`, `javascript`, `python`, `dotnet`, `java`, `go`, `rust`, `php`, `ruby`, `swift`, `kotlin`, `react`, `vue`, `angular`, `sql`, `docker`, `shell` |
-| phase | `plan`, `implement`, `review`, `release`, `debug`, `setup` |
+| phase | `plan`, `implement`, `review`, `release` [git], `debug`, `setup` |
 | decision | `add-vs-avoid-dependency`, `strict-vs-lenient`, `build-vs-reuse`, `now-vs-later`, `generic-vs-specific`, `automatic-vs-manual`, `ask-vs-decide`, `local-vs-remote`, `simple-vs-complete` |
+
+Text matching: tag names of the `stack`, `phase` and `decision` facets, and the artifact `build`, match through their aliases only, never by the bare name, so ordinary words ("go", "plan", "review", "build") do not tag a prompt. Decision tags have multi-word aliases only ("keep it simple", "do it later"), because single words such as "simple", "later" or "local" are too common.
 
 Path patterns of version 1 (artifact and stack): `hook` `(^|/)hooks?/`, `ci` `(^|/)\.github/workflows/|(^|/)\.gitlab-ci`, `config` `\.(json|ya?ml|toml|ini)$|(^|/)\.env`, `docs-file` `\.md$`, `test-file` `(^|/)tests?/|\.(test|spec)\.`, `dependency` `(^|/)(package(-lock)?\.json|requirements\.txt|pyproject\.toml|go\.mod|Cargo\.toml|.*\.csproj|Gemfile|composer\.json)$`, `db-schema` `(^|/)migrations?/|\.sql$`, `agent` `(^|/)\.claude/agents/`, `skill` `(^|/)skills?/.*SKILL\.md$`, `manifest` `(^|/)(plugin|marketplace|podium)\.json$`, `typescript` `\.tsx?$`, `javascript` `\.(m|c)?jsx?$`, `python` `\.py$`, `dotnet` `\.(cs|fs|csproj|sln)$`, `java` `\.java$`, `go` `\.go$`, `rust` `\.rs$`, `php` `\.php$`, `ruby` `\.rb$`, `swift` `\.swift$`, `kotlin` `\.kts?$`, `sql` `\.sql$`, `docker` `(^|/)(Dockerfile|docker-compose\.ya?ml)$`, `shell` `\.(sh|bash|zsh|ps1)$`, `react` `\.(jsx|tsx)$`, `vue` `\.vue$`.
 
@@ -226,7 +234,7 @@ A shard is rewritten (only the last line per id, no tombstones) when more than 3
 
 ## Archival and the active cap
 
-At the end of a run: cases `rejected` for more than 30 days, `stale` for more than 180 days, or beyond the 5,000 active cap (lowest `value = confidence × recency × (1 + hits)` first) move to `archive/`. An archived case comes back when a new extraction matches it (`merger.ts`).
+At the end of a run: cases `rejected` for more than 30 days, `stale` for more than 180 days (both counted from `statusAt`), or beyond the 5,000 active cap (lowest `value = confidence × recency × (1 + hits)` first) move to `archive/`. An archived case comes back when a new extraction matches it (`merger.ts`).
 
 ## Versioning and migration
 

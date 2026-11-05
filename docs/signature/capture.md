@@ -65,16 +65,20 @@ Applied to every text field before it is buffered. Rules, in order:
 
 | Rule | Pattern (summary) | Replacement |
 |---|---|---|
-| Private key block | `-----BEGIN [A-Z ]*PRIVATE KEY-----` to its `END` line | `<private-key>` |
-| Known token prefixes | `sk-ant-…`, `sk-…` (20+), `ghp_`, `gho_`, `ghs_`, `ghu_`, `github_pat_`, `glpat-`, `xox[abpr]-`, `AKIA[0-9A-Z]{16}`, `AIza[0-9A-Za-z_-]{35}`, `npm_…` | `<token>` |
-| JSON Web Token | three base64url segments starting with `eyJ` | `<token>` |
-| Assignment of a secret | `(password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|client[_-]?secret|auth)\s*[:=]\s*\S+` (case-insensitive) | name kept, value `<secret>` |
-| Credentials in a URL | `://user:pass@` | `://<credentials>@` |
+| Normalisation | NFKC; control characters below `0x20` except newline and tab, and default-ignorable characters (zero-width, variation selectors, fillers) removed first, so they cannot split a secret | removed |
+| Private key block | `-----BEGIN [A-Z ]*PRIVATE KEY( BLOCK)?-----` to its `END` line, or to the end of the text when unterminated (PEM and PGP) | `<private-key>` |
+| Known token prefixes | `sk-ant-…`, `sk-…` (20+), `sk_live_`/`sk_test_`/`rk_live_`/`rk_test_`, `whsec_`, `hf_`, `ghp_`, `gho_`, `ghs_`, `ghu_`, `ghr_`, `github_pat_`, `ya29.`, `glpat-`, `xox[abpr]-`, `AKIA[0-9A-Z]{16}`, `AIza[0-9A-Za-z_-]{35}`, `npm_…` | `<token>` |
+| JSON Web Token | three base64url segments starting with `eyJ`, anchored on a non-token character | `<token>` |
+| Authorization header | `Bearer` or `Basic` followed by 8+ token characters; `Basic` followed by a plain word is prose unless it follows `Authorization:` | `Bearer <token>` |
+| Assignment of a secret | a name containing password, passwd, pwd, secret, token, passphrase, api key, private key, access key, client secret, authorization, auth or credential, then `:`, `=`, `:=` or `=>` (JSON quotes allowed), then the value: quoted, or unquoted up to the end of the line (256 characters at most); also `DB_PASS=…`, flags `--password`, `--token`, `--secret`, `--api-key`, `mysql -p…`, `curl -u user:pass`, `-passin pass:…` | name kept, value `<secret>` |
+| Credentials in a URL | `://user:pass@` and `://:pass@`, the password running to the last `@` before the path (`p@ss` included) | `://<credentials>@` |
 | Secret query parameters | `[?&](token|key|sig|signature|secret|password|code)=[^&\s]+` | `=<secret>` |
-| Email | RFC-lite `\S+@\S+\.\w+` | `<email>` |
-| Home path | the resolved home directory prefix | `~` |
-| Long blob | 40+ characters of `[A-Za-z0-9+/=_-]` without spaces | `<blob>` |
-| Control characters | anything below `0x20` except newline and tab | removed |
+| Email | local part of 1 to 64 characters anchored on a non-email character, a domain of 1 to 8 labels | `<email>` |
+| Home path | the resolved home directory prefix, at a path boundary | `~` |
+| Hexadecimal key | 32+ hexadecimal characters as one token | `<blob>` |
+| Long blob | 40+ characters of `[A-Za-z0-9+/=_-]` without spaces, except a path or a kebab name made of lower-case words (`src/components/user-profile/settings-panel.tsx`) | `<blob>` |
+
+Every pattern is linear: bounded quantifiers and lookbehind anchors, tested on 1 MB adversarial inputs. `clean` redacts at most the first `max × 4 + 4096` characters before truncating; the last partial word of that slice is dropped as defence in depth; a pasted log never costs more than a few milliseconds.
 
 Then truncation to the field's limit, cutting on a character boundary and appending `…`.
 
