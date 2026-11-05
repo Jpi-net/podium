@@ -61,7 +61,19 @@ class Engine {
     })
     on('session.start', (_, e) => ({ cwd: e.cwd }))
     on('agent.list', () => ({ value: [] }))
-    on('fs.list', () => ({ value: [] }))
+    on('fs.list', (_, e) => {
+      if (sink.isRooted !== true) return { value: [] }
+      const prefix = `${String(e.path)}/`
+      const seen = new Map<string, unknown>()
+      for (const [key, text] of Object.entries(sink.files ?? {})) {
+        if (!key.startsWith(prefix)) continue
+        const rest = key.slice(prefix.length)
+        const slash = rest.indexOf('/')
+        if (slash < 0) seen.set(rest, { name: rest, kind: 'file', size: text.length, mtimeMs: 1, isLink: false })
+        else seen.set(rest.slice(0, slash), { name: rest.slice(0, slash), kind: 'dir', size: 0, mtimeMs: 1, isLink: false })
+      }
+      return { value: [...seen.values()] as never }
+    })
     on('fs.read', (_, e) => ({ value: sink.files?.[e.path] ?? Engine.file(sink, String(e.path)) ?? (String(e.path).endsWith('.claude/podium.json') && sink.isBare !== true ? JSON.stringify(Fixtures.SAMPLE_PROJECT) : '') }))
     on('store.get', () => ({ value: undefined }))
     on('env.get', (_, e) => {
@@ -1835,7 +1847,7 @@ test('the signature on command answers with a one-line text', async ($, on) => {
   const text = await SignatureEngine.run((input) => $.command.run(input), 'signature on')
 
   // Assert
-  expect(text).toBe('{"text":"Signature is on: it records your decisions from now on."}')
+  expect(text).toBe('{"text":"Signature is on: it records your decisions and learns from them in the background with your Claude plan (up to 300,000 tokens a day). Open /podium-stage signature to change it."}')
 })
 
 test('the signature on command enables Signature and writes its settings under the root', async ($, on) => {
@@ -2018,7 +2030,7 @@ test('a refused plan takes its feedback from the error text', async ($, on) => {
   // Arrange
   const sink = SignatureEngine.sink('enabled')
   SignatureEngine.stub(on, sink, false)
-  on('tool.call', () => ({ result: {}, isError: true, text: 'Use smaller steps' }) as never)
+  on('tool.call', () => ({ result: {}, isError: true, text: 'The agent proposed a plan that was rejected by the user. the user said: Use smaller steps' }) as never)
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
   await SignatureEngine.ready($)
 
@@ -2085,4 +2097,127 @@ test('a session end with the clear reason moves recording to the new session id'
   // Assert
   expect(SignatureEngine.journal(sink, 'old')).toHaveLength(1)
   expect(SignatureEngine.journal(sink, 'new')).toHaveLength(1)
+})
+
+test('a plan refusal without the rejection wording records no feedback', async ($, on) => {
+  // Arrange
+  const sink = SignatureEngine.sink('enabled')
+  SignatureEngine.stub(on, sink, false)
+  on('tool.call', () => ({ result: {}, isError: true, text: 'Use smaller steps' }) as never)
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await SignatureEngine.ready($)
+
+  // Act
+  await $.tool.call({ tool: 'ExitPlanMode', plan: '1. Rewrite everything' } as never)
+  await SignatureEngine.flush($)
+
+  // Assert
+  const plans = SignatureEngine.journal(sink).filter((signal) => signal.kind === 'plan')
+  expect(plans[0]?.data.outcome).toBe('refused')
+  expect(plans[0]?.data.feedback).toBe('')
+})
+
+test('a plan refusal with the wording but no user words records no feedback', async ($, on) => {
+  // Arrange
+  const sink = SignatureEngine.sink('enabled')
+  SignatureEngine.stub(on, sink, false)
+  on('tool.call', () => ({ result: {}, isError: true, text: 'The agent proposed a plan that was rejected by the user.' }) as never)
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await SignatureEngine.ready($)
+
+  // Act
+  await $.tool.call({ tool: 'ExitPlanMode', plan: '1. Rewrite everything' } as never)
+  await SignatureEngine.flush($)
+
+  // Assert
+  const plans = SignatureEngine.journal(sink).filter((signal) => signal.kind === 'plan')
+  expect(plans[0]?.data.feedback).toBe('')
+})
+
+test('a plan refusal with the other engine wording records the user words', async ($, on) => {
+  // Arrange
+  const sink = SignatureEngine.sink('enabled')
+  SignatureEngine.stub(on, sink, false)
+  on('tool.call', () => ({ result: {}, isError: true, text: "The user doesn't want to proceed with this tool use. the user said: not this one" }) as never)
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await SignatureEngine.ready($)
+
+  // Act
+  await $.tool.call({ tool: 'ExitPlanMode', plan: '1. Rewrite everything' } as never)
+  await SignatureEngine.flush($)
+
+  // Assert
+  const plans = SignatureEngine.journal(sink).filter((signal) => signal.kind === 'plan')
+  expect(plans[0]?.data.feedback).toBe('not this one')
+})
+
+test('the answer of a completed turn is recorded before a correction prompt', async ($, on) => {
+  // Arrange
+  const sink = SignatureEngine.sink('enabled')
+  SignatureEngine.stub(on, sink)
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await SignatureEngine.ready($)
+  await $.turn.complete({ answer: 'I will rewrite the whole module', text: '', durationMs: 10, isAborted: false, turnId: 't1', reason: 'answer' } as never)
+
+  // Act
+  await $.prompt.submit({ text: 'no, keep it small', origin: { kind: 'composer' } } as never)
+  await SignatureEngine.flush($)
+
+  // Assert
+  const turns = SignatureEngine.journal(sink).filter((signal) => signal.kind === 'turn')
+  expect(turns).toHaveLength(1)
+  expect(JSON.stringify(turns[0]?.data)).toContain('I will rewrite the whole module')
+})
+
+test('a tool call keeps working with Signature enabled', async ($, on) => {
+  // Arrange
+  const sink = SignatureEngine.sink('enabled')
+  SignatureEngine.stub(on, sink)
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+
+  // Act
+  const ran = await $.tool.call({ tool: 'Bash', command: 'git status', agentId: 'a1' })
+
+  // Assert
+  expect(ran).toEqual({ result: {} })
+})
+
+test('a top-level learn command from a model origin is refused', async ($, on) => {
+  // Arrange
+  SignatureEngine.stub(on, SignatureEngine.sink('enabled'))
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+
+  // Act
+  const text = await SignatureEngine.run((input) => $.command.run(input), 'learn /repo', 'model')
+
+  // Assert
+  expect(text).toBe('{"text":"Run this command yourself."}')
+})
+
+test('a top-level learn command from the composer reaches Signature', async ($, on) => {
+  // Arrange
+  SignatureEngine.stub(on, SignatureEngine.sink('enabled'))
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+
+  // Act
+  const text = await SignatureEngine.run((input) => $.command.run(input), 'learn')
+
+  // Assert
+  expect(text).toBe('{"text":"Usage: /podium-stage learn <path to a local repository>"}')
+})
+
+test('the learn-now, rebuild and forget subcommands from a model origin are refused', async ($, on) => {
+  // Arrange
+  SignatureEngine.stub(on, SignatureEngine.sink('enabled'))
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+
+  // Act
+  const answers = [
+    await SignatureEngine.run((input) => $.command.run(input), 'signature learn-now', 'model'),
+    await SignatureEngine.run((input) => $.command.run(input), 'signature rebuild', 'model'),
+    await SignatureEngine.run((input) => $.command.run(input), 'signature forget #3', 'model')
+  ]
+
+  // Assert
+  expect(answers).toEqual(Array(3).fill('{"text":"Run this command yourself."}'))
 })

@@ -32,7 +32,11 @@ class ViewFixture {
       never: () => void calls.push('never'),
       pause: () => void calls.push('pause'),
       resume: () => void calls.push('resume'),
-      erase: () => void calls.push('erase')
+      erase: () => void calls.push('erase'),
+      learnNow: () => void calls.push('learnNow'),
+      learnFrom: () => void calls.push('learnFrom'),
+      keep: (id: string) => void calls.push(`keep ${id}`),
+      reject: (id: string) => void calls.push(`reject ${id}`)
     }
   }
 
@@ -97,13 +101,13 @@ test('the opt-in view shows what Signature learns and where it stores it', () =>
   expect(drawn.text).toContain('~/.claude/podium on this machine')
 })
 
-test('the opt-in view lists five check boxes', () => {
+test('the opt-in view lists four check boxes', () => {
   // Act
   const drawn = ViewFixture.draw(ViewFixture.state())
 
   // Assert
   const boxes = drawn.buttons.filter((node) => String(node.props.key).startsWith('sig-choice-'))
-  expect(boxes).toHaveLength(5)
+  expect(boxes).toHaveLength(4)
 })
 
 test('the opt-in check boxes show the draft values', () => {
@@ -112,7 +116,7 @@ test('the opt-in check boxes show the draft values', () => {
 
   // Assert
   expect(ViewFixture.text(ViewFixture.button(drawn, 'sig-choice-sessions'))).toContain('[x]')
-  expect(ViewFixture.text(ViewFixture.button(drawn, 'sig-choice-pastSessions'))).toContain('[ ]')
+  expect(ViewFixture.text(ViewFixture.button(drawn, 'sig-choice-background'))).toContain('[x]')
 })
 
 test('the opt-in view has an Enable, a Not now and a Never ask button', () => {
@@ -128,10 +132,10 @@ test('pressing a check box toggles its key', () => {
   const drawn = ViewFixture.draw(ViewFixture.state())
 
   // Act
-  for (const key of ['sessions', 'history', 'pastSessions', 'background', 'apply']) ViewFixture.press(drawn, `sig-choice-${key}`)
+  for (const key of ['sessions', 'history', 'background', 'apply']) ViewFixture.press(drawn, `sig-choice-${key}`)
 
   // Assert
-  expect(ViewFixture.calls).toEqual(['toggle sessions', 'toggle history', 'toggle pastSessions', 'toggle background', 'toggle apply'])
+  expect(ViewFixture.calls).toEqual(['toggle sessions', 'toggle history', 'toggle background', 'toggle apply'])
 })
 
 test('pressing Enable calls the enable action', () => {
@@ -194,7 +198,7 @@ test('the enabled dashboard offers Pause and Erase', () => {
   const drawn = ViewFixture.draw(ViewFixture.enabled())
 
   // Assert
-  expect(ViewFixture.labels(drawn)).toEqual(['[ Pause ]', '[ Erase… ]'])
+  expect(ViewFixture.labels(drawn)).toEqual(['[ Pause ]', '[ Learn now ]', '[ Learn from another repository… ]', '[ Erase… ]'])
 })
 
 test('pressing Pause calls the pause action', () => {
@@ -213,7 +217,7 @@ test('pressing Erase calls the erase action', () => {
   const drawn = ViewFixture.draw(ViewFixture.enabled())
 
   // Act
-  ViewFixture.press(drawn, 'sig-actions-1')
+  ViewFixture.press(drawn, 'sig-actions-3')
 
   // Assert
   expect(ViewFixture.calls).toEqual(['erase'])
@@ -225,7 +229,7 @@ test('the paused dashboard shows Resume instead of Pause', () => {
 
   // Assert
   expect(drawn.text).toContain('◌ paused')
-  expect(ViewFixture.labels(drawn)).toEqual(['[ Resume ]', '[ Erase… ]'])
+  expect(ViewFixture.labels(drawn)).toEqual(['[ Resume ]', '[ Learn now ]', '[ Learn from another repository… ]', '[ Erase… ]'])
 })
 
 test('pressing Resume calls the resume action', () => {
@@ -401,4 +405,188 @@ test('the dashboard shows no lost warning when nothing was dropped', () => {
 
   // Assert
   expect(drawn.text).not.toContain('were dropped')
+})
+
+test('the dashboard status shows the running step and its progress', () => {
+  // Act
+  const drawn = ViewFixture.draw(ViewFixture.enabled({ learning: { ...Signature.empty().learning, isRunning: true, step: 'extracting', done: 2, total: 5 } }))
+
+  // Assert
+  expect(drawn.text).toContain('● learning (extracting 2/5)')
+})
+
+test('the dashboard status shows starting when the step is not known yet', () => {
+  // Act
+  const drawn = ViewFixture.draw(ViewFixture.enabled({ learning: { ...Signature.empty().learning, isRunning: true } }))
+
+  // Assert
+  expect(drawn.text).toContain('● learning (starting)')
+})
+
+test('the dashboard status shows never for a first run and the next run hint', () => {
+  // Act
+  const drawn = ViewFixture.draw(ViewFixture.enabled({ learning: { ...Signature.empty().learning, lastRunAt: 0, nextRunHint: 'when idle' } }))
+
+  // Assert
+  expect(drawn.text).toContain('● on · last run never · next when idle')
+})
+
+test('the dashboard status shows how long ago the last run was', () => {
+  // Act
+  const drawn = ViewFixture.draw(ViewFixture.enabled({ learning: { ...Signature.empty().learning, lastRunAt: Date.now() - 5 * 60_000 } }))
+
+  // Assert
+  expect(drawn.text).toContain('last run 5 min ago')
+})
+
+test('the dashboard shows the last run error when nothing is running', () => {
+  // Act
+  const drawn = ViewFixture.draw(ViewFixture.enabled({ learning: { ...Signature.empty().learning, lastError: 'model: stopped' } }))
+
+  // Assert
+  expect(drawn.text).toContain('Last run: model: stopped')
+})
+
+test('the dashboard hides the last run error while a run is in progress', () => {
+  // Act
+  const drawn = ViewFixture.draw(ViewFixture.enabled({ learning: { ...Signature.empty().learning, isRunning: true, lastError: 'model: stopped' } }))
+
+  // Assert
+  expect(drawn.text).not.toContain('Last run:')
+})
+
+test('the dashboard shows the profile counts and the tokens used today', () => {
+  // Act
+  const drawn = ViewFixture.draw(ViewFixture.enabled({ counts: { traits: 12, confirmed: 3, cases: 40, newTraits: 2 }, tokensToday: 2500 }))
+
+  // Assert
+  expect(drawn.text).toContain('12 traits (3 confirmed) · 40 cases · 2 new')
+  expect(drawn.text).toContain('2.5 k tokens used')
+})
+
+test('a lens is drawn with its strength bar, summary and blind spot', () => {
+  // Arrange
+  const lenses = [{ lens: 'security', strength: 0.5, summary: 'Validates input', blindSpot: 'size limits' }]
+
+  // Act
+  const drawn = ViewFixture.draw(ViewFixture.enabled({ lenses }))
+
+  // Assert
+  expect(drawn.text).toContain('Security')
+  expect(drawn.text).toContain('█████░░░░')
+  expect(drawn.text).toContain('Validates input')
+  expect(drawn.text).toContain('blind spot: size limits')
+})
+
+test('a lens on a narrow width shows only its name and bar', () => {
+  // Arrange
+  const lenses = [{ lens: 'security', strength: 1, summary: 'Validates input', blindSpot: 'size limits' }]
+
+  // Act
+  const drawn = ViewFixture.draw(ViewFixture.enabled({ lenses }), 50)
+
+  // Assert
+  expect(drawn.text).toContain('Security █████████')
+  expect(drawn.text).not.toContain('Validates input')
+  expect(drawn.text).not.toContain('blind spot')
+})
+
+test('the review list shows a statement with Keep and Not me buttons', () => {
+  // Arrange
+  const review = [{ id: 'security.validate', statement: 'Validates every input', lens: 'security', confidence: 0.8 }]
+
+  // Act
+  const drawn = ViewFixture.draw(ViewFixture.enabled({ review }))
+
+  // Assert
+  expect(drawn.text).toContain('To review (1)')
+  expect(drawn.text).toContain('Security: Validates every input')
+  expect(ViewFixture.labels(drawn)).toContain('[ ✓ Keep ]')
+  expect(ViewFixture.labels(drawn)).toContain('[ ✗ Not me ]')
+})
+
+test('pressing Keep calls keep with the trait id', () => {
+  // Arrange
+  const review = [{ id: 'security.validate', statement: 'Validates every input', lens: 'security', confidence: 0.8 }]
+  const drawn = ViewFixture.draw(ViewFixture.enabled({ review }))
+
+  // Act
+  ViewFixture.press(drawn, 'sig-review-actions-security.validate-0')
+
+  // Assert
+  expect(ViewFixture.calls).toEqual(['keep security.validate'])
+})
+
+test('pressing Not me calls reject with the trait id', () => {
+  // Arrange
+  const review = [{ id: 'security.validate', statement: 'Validates every input', lens: 'security', confidence: 0.8 }]
+  const drawn = ViewFixture.draw(ViewFixture.enabled({ review }))
+
+  // Act
+  ViewFixture.press(drawn, 'sig-review-actions-security.validate-1')
+
+  // Assert
+  expect(ViewFixture.calls).toEqual(['reject security.validate'])
+})
+
+test('the review list shows five traits and counts the rest', () => {
+  // Arrange
+  const review = Array.from({ length: 7 }, (_, index) => ({ id: `testing.t${index}`, statement: `Statement number ${index}`, lens: 'testing', confidence: 0.5 }))
+
+  // Act
+  const drawn = ViewFixture.draw(ViewFixture.enabled({ review }))
+
+  // Assert
+  expect(drawn.text).toContain('+2 more to review')
+  expect(drawn.text).not.toContain('Statement number 5')
+})
+
+test('repositories are drawn with a mark for their state', () => {
+  // Arrange
+  const repositories = [
+    { name: 'alpha', state: 'done' as const },
+    { name: 'beta', state: 'learning' as const },
+    { name: 'gamma', state: 'pending' as const },
+    { name: 'delta', state: 'excluded' as const },
+    { name: 'omega', state: 'no-identity' as const }
+  ]
+
+  // Act
+  const drawn = ViewFixture.draw(ViewFixture.enabled({ repositories }), 120)
+
+  // Assert
+  expect(drawn.text).toContain('alpha ✓  beta …  gamma ·  delta (excluded)  omega (no identity)')
+})
+
+test('pressing Learn now calls the learnNow action', () => {
+  // Arrange
+  const drawn = ViewFixture.draw(ViewFixture.enabled())
+
+  // Act
+  ViewFixture.press(drawn, 'sig-actions-1')
+
+  // Assert
+  expect(ViewFixture.calls).toEqual(['learnNow'])
+})
+
+test('pressing Learn from another repository calls the learnFrom action', () => {
+  // Arrange
+  const drawn = ViewFixture.draw(ViewFixture.enabled())
+
+  // Act
+  ViewFixture.press(drawn, 'sig-actions-2')
+
+  // Assert
+  expect(ViewFixture.calls).toEqual(['learnFrom'])
+})
+
+test('ago, bar and tokens format their values', () => {
+  // Assert
+  expect(SignatureView.ago(10 * 60_000, 0)).toBe('never')
+  expect(SignatureView.ago(10 * 60_000, 10 * 60_000)).toBe('just now')
+  expect(SignatureView.ago(3 * 3_600_000 + 1000, 1000)).toBe('3 h ago')
+  expect(SignatureView.bar(0)).toBe('░░░░░░░░░')
+  expect(SignatureView.bar(2)).toBe('█████████')
+  expect(SignatureView.tokens(999)).toBe('999')
+  expect(SignatureView.tokens(12_345)).toBe('12.3 k')
 })

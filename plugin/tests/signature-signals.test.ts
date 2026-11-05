@@ -462,3 +462,75 @@ test('projectId of a plain root path is eight hexadecimal characters', () => {
   // Assert
   expect(SignalExtractor.projectId('/home/j/repo')).toMatch(/^[0-9a-f]{8}$/)
 })
+
+test('a turn signal keeps its text redacted', () => {
+  // Act
+  const signal = SignalExtractor.turn(SignatureStoreFixture.context(), 'edited /Users/j/app and mailed a@b.co')
+
+  // Assert
+  expect(signal.kind).toBe('turn')
+  expect(signal.data.text).toBe('edited ~/app and mailed <email>')
+})
+
+test('a turn signal truncates its text at 600 characters', () => {
+  // Act
+  const signal = SignalExtractor.turn(SignatureStoreFixture.context(), 'word '.repeat(300))
+
+  // Assert
+  expect((signal.data.text as string).length).toBe(600)
+})
+
+test('a turn signal of a non-string has an empty text', () => {
+  // Assert
+  expect(SignalExtractor.turn(SignatureStoreFixture.context(), undefined as never).data.text).toBe('')
+})
+
+test('isRejection recognises the plan rejection message', () => {
+  // Assert
+  expect(SignalExtractor.isRejection('The agent proposed a plan that was rejected by the user. To tell you how to proceed, the user said:\nuse tabs')).toBe(true)
+})
+
+test('isRejection recognises the tool rejection message', () => {
+  // Assert
+  expect(SignalExtractor.isRejection("The user doesn't want to proceed with this tool use. The tool use was rejected")).toBe(true)
+})
+
+test('isRejection ignores leading whitespace', () => {
+  // Assert
+  expect(SignalExtractor.isRejection("  \nThe user doesn't want to proceed with this tool use.")).toBe(true)
+})
+
+test('isRejection is false when the sentence is in the middle of the text', () => {
+  // Assert
+  expect(SignalExtractor.isRejection("Result: The user doesn't want to proceed with this tool use.")).toBe(false)
+})
+
+test('isRejection is case sensitive', () => {
+  // Assert
+  expect(SignalExtractor.isRejection("the user doesn't want to proceed with this tool use.")).toBe(false)
+})
+
+test('isRejection is false for a permission denied message', () => {
+  // Assert
+  expect(SignalExtractor.isRejection('Permission to use Bash has been denied.')).toBe(false)
+})
+
+test('isRejection of a non-string is false', () => {
+  // Assert
+  expect(SignalExtractor.isRejection(undefined as never)).toBe(false)
+})
+
+test('rejectionFeedback is the text after the user said marker', () => {
+  // Assert
+  expect(SignalExtractor.rejectionFeedback('The agent proposed a plan that was rejected by the user. To tell you how to proceed, the user said:\nuse tabs  ')).toBe('use tabs')
+})
+
+test('rejectionFeedback is empty when there is no user said marker', () => {
+  // Assert
+  expect(SignalExtractor.rejectionFeedback("The user doesn't want to proceed with this tool use.")).toBe('')
+})
+
+test('rejectionFeedback is empty for a text that is not a rejection', () => {
+  // Assert
+  expect(SignalExtractor.rejectionFeedback('Something else. the user said: hello')).toBe('')
+})

@@ -195,3 +195,11 @@ test('parse of a non-string is empty', () => {
   // Assert
   expect(Journal.parse(undefined as never)).toEqual([])
 })
+
+test('parse accepts a turn line', () => {
+  // Arrange
+  const line = JSON.stringify({ ...SignatureStoreFixture.signal(0, 'turn'), data: { text: 'hello' } })
+
+  // Assert
+  expect(Journal.parse(line)[0]?.kind).toBe('turn')
+})

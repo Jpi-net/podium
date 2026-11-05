@@ -2,6 +2,8 @@ import type { Case, ExtractedCase } from '../../hooks/signature/cases'
 import type { RankQuery } from '../../hooks/signature/ranker'
 import { TagIndex, type TagIndexData } from '../../hooks/signature/tag-index'
 import type { MergeContext } from '../../hooks/signature/merger'
+import type { ProfileData, Trait } from '../../hooks/signature/profile'
+import type { Signal } from '../../hooks/signature/signals'
 import { Vocabulary, type VocabularyData } from '../../hooks/signature/vocabulary'
 
 export class SignatureFixtures {
@@ -100,6 +102,33 @@ export class SignatureFixtures {
       allowedEvidence: [],
       ...partial
     }
+  }
+
+  static signal(partial: Partial<Signal> = {}): Signal {
+    return { v: 1, at: SignatureFixtures.NOW, session: 's1', project: 'podium', projectId: 'abcd1234', stack: ['typescript'], kind: 'prompt', data: {}, ...partial }
+  }
+
+  static trait(partial: Partial<Trait> = {}): Trait {
+    return {
+      id: 'security.validate-boundaries',
+      lens: 'security',
+      facet: 'what',
+      statement: 'Validates every value that crosses a boundary',
+      scope: 'global',
+      stack: '',
+      confidence: 0.8,
+      cases: [1],
+      status: 'observed',
+      defaultCovered: false,
+      isBlindSpot: false,
+      updatedAt: '2026-11-01',
+      isNew: false,
+      ...partial
+    }
+  }
+
+  static profile(traits: Trait[] = [], partial: Partial<ProfileData> = {}): ProfileData {
+    return { version: 1, updatedAt: '2026-11-01', synthesizedAt: 0, changedSince: 0, traits, stats: { predictions: 0, hits: 0, missed: 0 }, ...partial }
   }
 
   static rawIndex(n: number, df: Record<string, number>): TagIndexData {

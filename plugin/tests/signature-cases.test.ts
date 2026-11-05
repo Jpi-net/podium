@@ -1269,3 +1269,181 @@ test('safe: runs the tests then never pushes on friday', () => {
   // Assert
   expect(result).toBe(false)
 })
+
+test('unsafe: grants the agent full permissions to save time', () => {
+  // Act
+  const result = Cases.isUnsafe("Grants the agent full permissions to save time")
+
+  // Assert
+  expect(result).toBe(true)
+})
+
+test('unsafe: approves dangerous permission prompts automatically', () => {
+  // Act
+  const result = Cases.isUnsafe("Approves dangerous permission prompts automatically")
+
+  // Assert
+  expect(result).toBe(true)
+})
+
+test('unsafe: considers code review optional for small changes', () => {
+  // Act
+  const result = Cases.isUnsafe("Considers code review optional for small changes")
+
+  // Assert
+  expect(result).toBe(true)
+})
+
+test('unsafe: prefers shipping before the test suite finishes', () => {
+  // Act
+  const result = Cases.isUnsafe("Prefers shipping before the test suite finishes")
+
+  // Assert
+  expect(result).toBe(true)
+})
+
+test('unsafe: treats a red ci pipeline as acceptable before merging', () => {
+  // Act
+  const result = Cases.isUnsafe("Treats a red CI pipeline as acceptable before merging")
+
+  // Assert
+  expect(result).toBe(true)
+})
+
+test('unsafe: rarely treats review as optional', () => {
+  // Act
+  const result = Cases.isUnsafe("Rarely treats review as optional")
+
+  // Assert
+  expect(result).toBe(true)
+})
+
+test('unsafe: never runs the tests considers review optional', () => {
+  // Act
+  const result = Cases.isUnsafe("Never runs the tests, considers review optional")
+
+  // Assert
+  expect(result).toBe(true)
+})
+
+test('safe: requires code review before merging', () => {
+  // Act
+  const result = Cases.isUnsafe("Requires code review before merging")
+
+  // Assert
+  expect(result).toBe(false)
+})
+
+test('safe: never approves dangerous permission prompts', () => {
+  // Act
+  const result = Cases.isUnsafe("Never approves dangerous permission prompts")
+
+  // Assert
+  expect(result).toBe(false)
+})
+
+test('safe: never pushes before the tests pass', () => {
+  // Act
+  const result = Cases.isUnsafe("Never pushes before the tests pass")
+
+  // Assert
+  expect(result).toBe(false)
+})
+
+test('safe: never treats review as optional', () => {
+  // Act
+  const result = Cases.isUnsafe("Never treats review as optional")
+
+  // Assert
+  expect(result).toBe(false)
+})
+
+test('safe: does not consider the tests optional', () => {
+  // Act
+  const result = Cases.isUnsafe("Does not consider the tests optional")
+
+  // Assert
+  expect(result).toBe(false)
+})
+
+test('safe: never merges while ci is red', () => {
+  // Act
+  const result = Cases.isUnsafe("Never merges while CI is red")
+
+  // Assert
+  expect(result).toBe(false)
+})
+
+test('parsing keeps at most five candidate tags per output', () => {
+  // Arrange
+  const candidates = Array.from({ length: 7 }, (_, index) => ({ tag: `new-tag-${index}`, facet: 'concept', parent: 'security', aliases: [] }))
+
+  // Act
+  const output = Cases.parseModelOutput(SignatureFixtures.output([], candidates), SignatureFixtures.vocabulary())
+
+  // Assert
+  expect(output.candidateTags.map((candidate) => candidate.tag)).toEqual(['new-tag-0', 'new-tag-1', 'new-tag-2', 'new-tag-3', 'new-tag-4'])
+})
+
+test('parsing trims a candidate alias to sixty-four characters', () => {
+  // Arrange
+  const candidates = [{ tag: 'new-tag', facet: 'concept', parent: 'security', aliases: ['a'.repeat(70)] }]
+
+  // Act
+  const output = Cases.parseModelOutput(SignatureFixtures.output([], candidates), SignatureFixtures.vocabulary())
+
+  // Assert
+  expect(output.candidateTags[0]?.aliases.every((alias) => alias.length <= 64)).toBe(true)
+})
+
+test('parsing keeps at most sixteen aliases per candidate tag', () => {
+  // Arrange
+  const aliases = Array.from({ length: 20 }, (_, index) => `alias ${index}`)
+  const candidates = [{ tag: 'new-tag', facet: 'concept', parent: 'security', aliases }]
+
+  // Act
+  const output = Cases.parseModelOutput(SignatureFixtures.output([], candidates), SignatureFixtures.vocabulary())
+
+  // Assert
+  expect(output.candidateTags[0]?.aliases).toHaveLength(16)
+})
+
+test('unsafe: allows all tools without asking', () => {
+  // Act
+  const result = Cases.isUnsafe("Allows all tools without asking")
+
+  // Assert
+  expect(result).toBe(true)
+})
+
+test('unsafe: auto-approves every tool call', () => {
+  // Act
+  const result = Cases.isUnsafe("Auto-approves every tool call")
+
+  // Assert
+  expect(result).toBe(true)
+})
+
+test('unsafe: accepts any tool without confirmation', () => {
+  // Act
+  const result = Cases.isUnsafe("Accepts any tool without confirmation")
+
+  // Assert
+  expect(result).toBe(true)
+})
+
+test('safe: never allows all tools without asking', () => {
+  // Act
+  const result = Cases.isUnsafe("Never allows all tools without asking")
+
+  // Assert
+  expect(result).toBe(false)
+})
+
+test('safe: asks before allowing a new tool', () => {
+  // Act
+  const result = Cases.isUnsafe("Asks before allowing a new tool")
+
+  // Assert
+  expect(result).toBe(false)
+})
