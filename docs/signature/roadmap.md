@@ -319,10 +319,137 @@ Delivers: `SignatureStore` that checks `FormatVersion.isNewer(text, 1)` before p
 
 ## Phase 3: Learning
 
-| Owner | Files |
-|---|---|
-| panel-expert | `history.ts`, `prompts.ts`, `learner.ts`, `profile.ts` (merge and synthesis parts); idle scheduling in `signature.ts` |
-| test-expert | tests with `ScriptedModel` and `ScriptedGit` fixtures: full run on a fixture repository, budget stop, lock contention, backoff, corrupt files, unsafe model output |
+### Files and owners
+
+| Wave | Owner | Files |
+|---|---|---|
+| 1 | panel-expert H | new `history.ts`, `prompts.ts` |
+| 1 | panel-expert P | new `profile.ts` |
+| 1 | panel-expert S | `store.ts` (cases, index, profile, vocabulary overlay, history cursors, lock, journal listing and emptying, corrupt copies) |
+| 1 | panel-expert A | `signals.ts` (`turn` signal) |
+| 2 | panel-expert L | new `learner.ts` |
+| 3 | panel-expert D | `signature.ts`, `view.tsx`, `register.tsx`, `plugin/types/index.d.ts` |
+| 4 | test-experts | `signature-history.test.ts`, `signature-prompts.test.ts`, `signature-profile.test.ts`, `signature-learner.test.ts`, store/signals/facade/view/register additions, `ScriptedModel` and `ScriptedGit` fixtures |
+| 4 | doc-writer | `plugin/README.md`, `PRIVACY.md`, `CHANGELOG.md` |
+
+### Contracts
+
+```ts
+// history.ts
+export type CommitFile = { path: string, added: number, deleted: number }
+export type Commit = { sha: string, at: string, subject: string, body: string, files: CommitFile[] }
+export type HistorySource = 'auto' | 'manual'
+export type HistoryCursor = { version: 1, root: string, name: string, identities: string[], head: string, done: string[], scanned: number, selected: number, isComplete: boolean, source: HistorySource }
+export class HistoryScanner {
+  static readonly PAGE: number
+  static readonly PER_RUN: number
+  static readonly BACKLOG: number
+  static isSha(text: string): boolean
+  static isIdentity(text: string): boolean
+  static repoName(root: string): string
+  static logArgs(identities: readonly string[], skip: number, count: number): string[]
+  static parseLog(stdout: string): Commit[]
+  static isNoise(path: string): boolean
+  static priority(commit: Commit, isEarly: boolean): number
+  static select(commits: readonly Commit[], cursor: HistoryCursor, earliest: ReadonlySet<string>): Commit[]
+  static showArgs(sha: string, paths: readonly string[]): string[]
+  static excerpt(repo: string, commit: Commit, diff: string, home: string): { id: string, text: string }
+  static emptyCursor(root: string, name: string, source: HistorySource): HistoryCursor
+  static parseCursor(text: string): HistoryCursor | undefined
+  static serializeCursor(cursor: HistoryCursor): string
+  static remember(cursor: HistoryCursor, shas: readonly string[], head: string): HistoryCursor
+}
+
+// prompts.ts
+export type Batch = { text: string, evidence: string[] }
+export type Episode = { session: string, project: string, stack: string[], at: number, lines: string[], evidence: string[] }
+export class LearningPrompts {
+  static readonly CONTRACT: number
+  static readonly BATCH_CHARS: number
+  static extraction(vocabulary: VocabularyData): string
+  static synthesis(): string
+  static episodes(signals: readonly Signal[]): Episode[]
+  static render(episode: Episode): string
+  static batches(items: readonly { text: string, evidence: readonly string[] }[]): Batch[]
+  static synthesisInput(profile: ProfileData, cases: readonly Case[]): string
+  static extractor(today: string): string
+}
+
+// profile.ts
+export type Facet5 = 'what' | 'when' | 'depth' | 'tradeoff' | 'blind-spot'
+export type TraitStatus = 'observed' | 'confirmed' | 'rejected' | 'stale'
+export type Trait = { id: string, lens: string, facet: Facet5, statement: string, scope: Scope, stack: string, confidence: number, cases: number[], status: TraitStatus, defaultCovered: boolean, isBlindSpot: boolean, updatedAt: string, isNew: boolean }
+export type ProfileStats = { predictions: number, hits: number, missed: number }
+export type ProfileData = { version: 1, updatedAt: string, synthesizedAt: number, changedSince: number, traits: Trait[], stats: ProfileStats }
+export type LensSummary = { lens: string, strength: number, summary: string, blindSpot: string }
+export class Profile {
+  static readonly MAX_TRAITS: number
+  static empty(): ProfileData
+  static parse(text: string): ProfileData
+  static serialize(profile: ProfileData): string
+  static isId(text: string): boolean
+  static merge(profile: ProfileData, output: string, cases: readonly Case[], today: string): { profile: ProfileData, added: number, dropped: number }
+  static recompute(profile: ProfileData, cases: readonly Case[], today: string): ProfileData
+  static confirm(profile: ProfileData, id: string, today: string): ProfileData
+  static reject(profile: ProfileData, id: string, today: string): ProfileData
+  static isDue(profile: ProfileData, now: number, isForced: boolean): boolean
+  static review(profile: ProfileData): Trait[]
+  static lenses(profile: ProfileData): LensSummary[]
+}
+
+// store.ts additions
+export type Lock = { owner: string, expiresAt: number }
+export type CaseSet = { cases: Case[], archived: Case[], bad: number }
+export type JournalFile = { path: string, key: string, bytes: number }
+export class SignatureStore {
+  static takeLock(fs: FsPort, files: SignatureFiles, owner: string, now: number, realRoot: string, wait: (ms: number) => Promise<void>): Promise<boolean>
+  static releaseLock(fs: FsPort, files: SignatureFiles, owner: string, realRoot: string): Promise<void>
+  static readCases(fs: FsPort, files: SignatureFiles): Promise<CaseSet>
+  static writeCases(fs: FsPort, files: SignatureFiles, cases: readonly Case[], archived: readonly Case[], realRoot: string): Promise<boolean>
+  static writeIndex(fs: FsPort, files: SignatureFiles, index: TagIndexData, realRoot: string): Promise<boolean>
+  static readProfile(fs: FsPort, files: SignatureFiles): Promise<ReadResult<ProfileData>>
+  static writeProfile(fs: FsPort, files: SignatureFiles, profile: ProfileData, realRoot: string): Promise<boolean>
+  static readOverlay(fs: FsPort, files: SignatureFiles): Promise<ReadResult<VocabularyOverlay>>
+  static writeOverlay(fs: FsPort, files: SignatureFiles, overlay: VocabularyOverlay, realRoot: string): Promise<boolean>
+  static readCursor(fs: FsPort, files: SignatureFiles, repoId: string): Promise<HistoryCursor | undefined>
+  static writeCursor(fs: FsPort, files: SignatureFiles, repoId: string, cursor: HistoryCursor, realRoot: string): Promise<boolean>
+  static journalFiles(fs: FsPort, files: SignatureFiles): Promise<JournalFile[]>
+  static emptyFile(fs: FsPort, files: SignatureFiles, path: string, realRoot: string): Promise<boolean>
+  static quarantine(fs: FsPort, files: SignatureFiles, path: string, text: string, now: number, realRoot: string): Promise<boolean>
+}
+
+// signals.ts addition
+// SignalKind gains 'turn'; data { text } (600 characters, redacted)
+static turn(context: SignalContext, text: string): Signal
+
+// learner.ts
+export type ModelRequest = { model: string, system: { text: string, cache: boolean }[], prompt: string, maxTokens: number, timeoutMs: number }
+export type ModelAnswer = { isAnswered: boolean, text: string, reason: string, inputTokens: number, outputTokens: number }
+export type ModelPort = (request: ModelRequest) => Promise<ModelAnswer>
+export type LearnPorts = { fs: FsPort, git: GitPort, model: ModelPort, now: () => number, wait: (ms: number) => Promise<void> }
+export type Repository = { root: string, name: string, id: string, source: HistorySource }
+export type RunInput = { files: SignatureFiles, realRoot: string, settings: Settings, owner: string, home: string, project: string, projectId: string, stack: string, repositories: readonly Repository[], isForced: boolean, isRebuild: boolean }
+export type Progress = { step: string, done: number, total: number }
+export type RunReport = { isOk: boolean, tokens: number, added: number, reinforced: number, traits: number, newTraits: number, newTags: number, note: string }
+export class Learner {
+  static readonly RUN_TOKENS: number
+  static estimate(text: string): number
+  static isDue(state: StoreState, settings: Settings, now: number, pending: number, hasHistory: boolean, isForced: boolean): boolean
+  static run(ports: LearnPorts, input: RunInput, progress: (value: Progress) => void): Promise<RunReport>
+}
+```
+
+### Behaviour
+
+- Runs follow `learning.md` (Run steps A to D, budgets, Merge, Confidence, Synthesis, Vocabulary candidates, Safety floor); redundancy pruning, rebuild of extraction and past sessions backfill stay in later phases.
+- A run is started by the facade only: on idle (`learning.idleMinutes` without prompt, tool call or turn), by `/podium-stage signature learn-now`, by `/podium-stage learn <path>`, and by `rebuild`. Never awaited by a hook; progress goes to the view state; one toast when it learned something and `notify` is on.
+- The batch's evidence ids are passed as `allowedEvidence`; the journal cursors and the history `done` list of a batch are written in the same step as the cases that batch produced (prerequisite 6).
+- `turn` signals: the facade keeps the last main-thread turn text (redacted, 600 characters) in memory and records it only when the next prompt is a correction or follows an abort, just before that prompt.
+- `/podium-stage learn <path>`: the path must resolve (real path) to a git working tree (`git -C <real path> rev-parse --show-toplevel` succeeds); URLs are refused with "Clone the repository first, then pass its folder."; the research starts immediately in the background and counts against the daily budget. Only when the person typed the command.
+- `forget <trait id | #case id>`: rejects a trait or a case. Review list in the tab: new traits with Keep / Not me. Review of new tags (Keep / Remove) is deferred to phase 7 with export and import; the tab says so.
+- `rebuild`: under the lock, rebuild `index.json` from the cases and run a synthesis.
+- Plan feedback is kept only when the tool error text starts with the engine's rejection wording (security note of phase 2); otherwise feedback is ''.
+- The dashboard hint "Signature only records for now" and the README sentence about this release are replaced.
 
 Also in phase 3: a `turn` signal carrying the main thread's redacted turn text (600 characters) recorded only when the next prompt is a correction or follows an abort, which the refusal extraction of `learning.md` pairs with that prompt (phase 2 does not record it); the dashboard hint "Signature only records for now" and the README sentence about this release replaced together.
 
