@@ -459,13 +459,61 @@ Delivers: background runs, current-repository research, `/podium-stage learn <pa
 
 ## Phase 4: Application
 
-| Owner | Files |
-|---|---|
-| panel-expert | `profile.ts` (section, context, hint), `prompt.compose`, `prompt.submit` context, AskUserQuestion hint, `recall` tool, `agent.offer` in `register.tsx` / `signature.ts` |
-| panel-expert (second, disjoint) | `plugin/agents/developer-proxy.md` |
-| test-expert | section stability across a session, context threshold, hint prediction and fidelity counting, recall tool output, agent offer gating |
+### Files and owners
 
-Delivers: everything in `application.md` sections 1 to 4. Measures fidelity from day one.
+| Wave | Owner | Files |
+|---|---|---|
+| 1 | panel-expert P | `profile.ts` (section, context block, hint prediction, fidelity) |
+| 1 | panel-expert R | new `recall.ts` (index and shard access for the fast path and the tool, case formatting) |
+| 1 | panel-expert G | new `plugin/agents/developer-proxy.md` |
+| 2 | panel-expert D | `signature.ts`, `view.tsx`, `register.tsx`, `plugin/types/index.d.ts` |
+| 3 | test-experts | `signature-profile.test.ts` additions, new `signature-recall.test.ts`, facade, view, register additions |
+| 3 | doc-writer | `plugin/README.md`, `PRIVACY.md`, `CHANGELOG.md` |
+
+### Contracts
+
+```ts
+// profile.ts additions
+export type SectionInput = { stack: readonly string[], projectId: string }
+export type Prediction = { question: string, label: string, score: number }
+export class Profile {
+  static readonly SECTION_CHARS: number
+  static readonly CONTEXT_CHARS: number
+  static section(profile: ProfileData, input: SectionInput): string
+  static contextBlock(cases: readonly Case[], blindSpots: readonly Trait[]): string
+  static predict(question: string, options: readonly string[], cases: readonly { value: Case, score: number }[]): Prediction | undefined
+  static record(profile: ProfileData, predicted: number, hits: number, missed: number): ProfileData
+  static fidelity(profile: ProfileData): number
+}
+
+// recall.ts
+export type RecallInput = { situation: string, tags: readonly string[], limit: number }
+export type Recalled = { value: Case, score: number }
+export class Recall {
+  static readonly TOOL: string
+  static readonly FAST_K: number
+  static readonly FAST_MIN: number
+  static readonly DEEP_MIN: number
+  static description(vocabulary: VocabularyData): string
+  static schema(): Record<string, unknown>
+  static parseInput(raw: unknown): RecallInput | undefined
+  static query(vocabulary: VocabularyData, tags: readonly string[], stack: readonly string[], projectId: string, now: number, halfLifeMonths: number): RankQuery
+  static fast(index: TagIndexData, vocabulary: VocabularyData, situation: Situation, projectId: string, now: number, halfLifeMonths: number): Ranked[]
+  static deep(index: TagIndexData, vocabulary: VocabularyData, input: RecallInput, stack: readonly string[], projectId: string, now: number, halfLifeMonths: number): Ranked[]
+  static read(fs: FsPort, files: SignatureFiles, ids: readonly number[]): Promise<Case[]>
+  static format(cases: readonly Recalled[]): string
+}
+```
+
+### Behaviour
+
+- `prompt.compose`: when consent is enabled, the session is not excluded and `apply.section` is on, add `{ id: 'podium:signature', scope: 'session', text }` after the engine's sections. The text is computed once at `session.start` from `profile.json` (and after `/clear`), never changed mid-thread; empty profile → no section. Content and selection rules: `application.md` section 1, at most `SECTION_CHARS` 2,500 characters, the precedence line first, the recall hint last only when the recall tool is registered.
+- `prompt.submit`: when `apply.context` is on, tag the situation (`SituationTagger.tag` with the session stack), rank with `Recall.fast` (`FAST_K` 3, `FAST_MIN` 6.0), read the hits' shards, and attach `Profile.contextBlock` (≤ `CONTEXT_CHARS` 1,200) as one `context` entry before `next(e)`. Index loaded at start and reloaded when `index.json` mtime changed, at most once a minute. Never for meta, notification, plugin or `!` prompts or slash commands of other plugins. Bounded in time: if the shards are not read within 300 ms the prompt goes without context. Injected case ids are recorded as a `use` signal.
+- `AskUserQuestion` hint (`apply.hints`): before `next(e)`, per question tag question + header + labels, `Recall.fast` with `FAST_MIN` 4.0 and k 5, `Profile.predict`; first question with a prediction gets `$.ui.notice(e.tool_use_id, 'Signature: you usually choose "<label>"')`. After `next(e)`, the predictions are compared with the answers and stored in the question signal (`predicted`); the facade adds predictions/hits to `profile.stats` at its next profile write (through the learner or a dedicated store write under the lock).
+- Recall tool (`apply.proxy` or `apply.section`): registered at `session.start` with `$.tool.register({ name: 'recall', description: Recall.description(vocabulary), inputSchema: Recall.schema(), isDeferred: false })`, served by `on('tool.call', { tool: 'mcp__podium__recall' })` returning `{ result: Recall.format(...) }`; description frozen for the session. Unavailable (consent off, excluded) → the tool answers "Signature is not active in this session."
+- Proxy agent: `plugin/agents/developer-proxy.md` per `application.md` section 4; `on('agent.offer')` returns `{ ...r, isOffered: false }` for `podium:developer-proxy` (match the engine's agent name form) when consent is not enabled, the session is excluded or `apply.proxy` is off.
+- Fidelity: the dashboard shows "Fidelity N % of your choices predicted" when there are at least 10 predictions.
+- Safety: every injected or returned text comes only from stored cases and traits (already behind `Cases.isUnsafe`); the section says the project's instructions win and that no safety measure may be lowered because of the profile.
 
 ## Phase 5: `/podium` integration
 

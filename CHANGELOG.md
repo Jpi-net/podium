@@ -13,6 +13,12 @@ All notable changes to this project are documented here. The format follows [Kee
 - Signature learning: Podium summarises what it recorded, and commits authored with your email address, into a profile of traits by lens (security, architecture, robustness, testing, git, developer experience, product), in the background when idle or on request. The requests go through your own Claude Code session and plan, masked, capped at 2 runs and 300,000 tokens a day by default.
 - The Signature tab shows the learning status, counts, lenses and a list of new traits to review with Keep and Not me, plus Learn now and Learn from another repository.
 - `/podium-stage signature learn-now`, `rebuild` and `forget <trait id or #case>`, and `/podium-stage learn <path>` to learn from another local repository. These only run when you type them.
+- Signature now uses your profile: a short profile section in every session's system prompt with only the traits you kept (project instructions always win, and it never lowers a safety measure), and the precedents that match a prompt attached to it, invisibly, from the current project or global and stack-wide ones, never from another project. Anything that looks like markup, code, links, shell commands or text addressed to a model stays stored but is never brought into a session.
+- Observed traits wait in the Signature tab's review list until you Keep them; the tab says "Keep traits to bring them into your sessions." while none is kept.
+- `/podium-stage learn <path>` refuses the current repository, which is already read automatically.
+- A line under Claude's questions, `Signature: you usually choose "..."`, and a Fidelity figure in the Signature tab showing how often it was right.
+- A `recall` tool Claude can call for your past decisions, and the `podium:developer-proxy` agent, a read-only stand-in that reviews a plan against how you decide.
+- Four settings under `apply` in `settings.json` (`section`, `context`, `hints`, `proxy`) control them; the opt-in switch sets all four. Pause or off stops precedents, hints and recall at once.
 - PRIVACY.md and the README describe what Signature records, where, and how to stop it.
 
 ## [0.2.3] - 2026-11-02

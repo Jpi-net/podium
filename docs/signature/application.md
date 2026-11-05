@@ -6,7 +6,7 @@ How the profile reaches Claude, automatically, in every project, once Signature 
 
 `on('prompt.compose')`: `const r = await next(e)`, then `{ sections: [...r.sections, SECTION] }` when the frozen text is not empty.
 
-`SECTION = { id: 'podium:signature', scope: 'session', text }`, text built at `session.start` by `Profile.section(profile, { stack, projectId })` and never changed during the session (see `architecture.md`: a changed section loses the prompt cache).
+`SECTION = { id: 'podium:signature', scope: 'session', text }`, text built at `session.start` (and after `/clear`) by `Profile.section(profile, { stack, projectId }, hasRecall)` and never changed during the thread (see `architecture.md`: a changed section loses the prompt cache, and the engine keeps a thread's recorded prompt anyway). Consequence: pausing or declining stops the precedents, the hints and the recall tool at once, and removes the section from the next session or after `/clear`.
 
 Content, at most 2,500 characters, English:
 
@@ -25,7 +25,7 @@ Blind spots to cover for them: input size limits; denial of service.
 Use the recall tool (mcp__podium__recall) before a decision with real alternatives.
 ```
 
-Selection: traits with status `confirmed`, or `observed` with confidence ≥ 0.75; not `defaultCovered`; scope global, or stack matching the session's stack, or project matching `projectId`; ordered by lens (fixed order: security, architecture, robustness, testing, git, dx, product, others), then confidence; one line per lens joining up to three statements; blind spots on their own line; cut at the limit on a line boundary.
+Selection: only traits with status `confirmed` (the developer kept them in the tab), not `defaultCovered`, whose statement is quotable and safe; scope global, or a stack or project scope whose stack matches the session's stack. Observed traits never enter the system prompt, whatever their confidence: a synthesis steered by stored text could otherwise attach an instruction-like statement to legitimate cases and reach every project unreviewed. They wait in the tab's review list; the tab says "Keep traits to bring them into your sessions." when none is kept yet; not `defaultCovered`; scope global, or a stack or project scope whose stack matches the session's stack (traits carry no project id, so a project-scoped trait is applied wherever the same stack is used); ordered by lens (fixed order: security, architecture, robustness, testing, git, dx, product, others), then confidence; one line per lens joining up to three statements; blind spots on their own line; cut at the limit on a line boundary.
 
 ## 2. Precedents with each prompt (`apply.context`)
 
