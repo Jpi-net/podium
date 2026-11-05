@@ -169,7 +169,7 @@ While you have not chosen, a new interactive session introduces it at most once 
 - learn in the background when idle;
 - bring my profile into every session.
 
-Choose **Enable**, **Not now** (it does not introduce itself again for 7 days) or **Never ask** (`/podium-stage signature on` changes your mind later). The switch for bringing your profile into every session is saved but has no effect yet.
+Choose **Enable**, **Not now** (it does not introduce itself again for 7 days) or **Never ask** (`/podium-stage signature on` changes your mind later).
 
 ### What is recorded
 
@@ -197,7 +197,7 @@ Recording is only the first step. Podium then asks Claude to summarise what it r
 - **Through your own session:** the requests go to Claude through your Claude Code session and your plan, with the model `sonnet` by default. Podium has no server and sends nothing anywhere else.
 - **Budget:** by default at most 2 background runs and 300,000 tokens a day, and at most 120,000 tokens in one run. After a failed run it waits 1 hour, then 4, then 24 before trying again in the background. `learn-now` and `rebuild` skip the runs-per-day limit and the wait, but not the daily token limit. The `learning` block of `settings.json` (`runsPerDay`, `tokensPerDay`, `idleMinutes`, `model`) holds these values.
 - **Notification:** when a run finds something new and notifications are on (`/podium-stage notify on`), a toast says "Signature learned N new things about how you work."
-- **Stopping:** `pause`, `off`, `Never ask` and `erase` stop learning, in every Claude Code window: each run re-reads your choice before every request, so nothing more is sent. `erase` is refused while a run is in progress ("A learning run is in progress; try again in a moment."); try again when it ends.
+- **Stopping:** `pause`, `off`, `Never ask` and `erase` stop learning, in every Claude Code window: each run re-reads your choice before every request, so nothing more is sent. They also stop precedents, hints and recall. `erase` is refused while a run is in progress ("A learning run is in progress; try again in a moment."); try again when it ends.
 
 ### What is sent to Claude
 
@@ -209,11 +209,25 @@ Only while learning runs, only masked, and nothing beyond this list:
 
 Podium reads history only from the repository of the current session and from the ones you add with `/podium-stage learn <path>`, and skips excluded folders and folders with a `.podium-private` file. It runs only read-only git commands for this.
 
+### How it brings your profile to Claude
+
+Once Signature is on and has learned something, it uses the profile in every interactive session, in any project that is not excluded. This is controlled by four settings under `apply` in `settings.json` (`section`, `context`, `hints`, `proxy`); the opt-in screen's switch "Bring my profile into every session" sets all four together.
+
+- **A profile section in the system prompt** (`apply.section`): a short block, at most 2,500 characters, titled "How this developer works (Podium Signature)". It has one line per lens (security, architecture, robustness, testing, git, developer experience, product) with only the traits you kept (**Keep** in the Signature tab) that apply to the project's stack, then your blind spots. Observed traits stay in the tab's **To review** list until you keep them; while none is kept, the tab says "Keep traits to bring them into your sessions." It states that the project's `CLAUDE.md`, rules and manifest override it and that it never lowers a safety measure. It is read once when a session starts (and after `/clear`) and does not change during the conversation.
+- **Precedents with your prompts** (`apply.context`): when your prompt resembles past decisions, Podium attaches up to three of them, taken from what it learned in the current project, plus global or stack-wide ones, never from another project, (and at most two blind-spot reminders) to the prompt as extra context, under "Developer precedents (Podium Signature; project instructions override these)". You do not see them in the conversation; Claude does. Only prompts you type yourself get precedents: not slash commands, prompts starting with `!`, or automatic messages.
+- **A hint under Claude's questions** (`apply.hints`): when Claude asks you a question with options and the profile has a clear precedent, a line says `Signature: you usually choose "<option>"`. It never answers for you. Once at least 10 questions were predicted, the tab shows a **Fidelity** figure: the share of your choices that matched the hint.
+- **A `recall` tool** (`apply.section` or `apply.proxy`): Claude can ask for your past decisions on a situation (`mcp__podium__recall`) before a choice with real alternatives. It returns up to 20 cases, each with its evidence count, and only reads what Signature stored.
+- **The `developer-proxy` agent** (`apply.proxy`, `podium:developer-proxy`): a read-only agent that stands in for you. Ask Claude to run it before you validate a plan, before a decision with real alternatives, or as an extra reviewer. It checks each decision against your cases and answers with a verdict (would accept, would adjust, would refuse), the cases it relies on, your blind spots the plan does not cover, and the decisions with no precedent. It never invents a preference without a case.
+
+Anything that looks like markup, code, links, shell commands or text addressed to a model stays stored but is never brought into a session.
+
+Precedents, hints and the recall tool only run while Signature is on and the folder is not excluded. `pause` and `off` stop them at once; the profile section is removed from the next session or after `/clear`, because it is fixed for the conversation.
+
 ### The Signature tab
 
-Once enabled the tab shows: the learning status (on, learning with its step, or paused, with the last run and the next one), the profile counts (traits, how many you confirmed, cases, new ones), what was recorded this session, the tokens used today, the storage, the repositories with their state, one line per lens with a strength bar and its blind spot, and a **To review** list.
+Once enabled the tab shows: the learning status (on, learning with its step, or paused, with the last run and the next one), the profile counts (traits, how many you confirmed, cases, new ones), what was recorded this session, the tokens used today, the fidelity of the hints once there are enough, the storage, the repositories with their state, one line per lens with a strength bar and its blind spot, and a **To review** list.
 
-- **To review:** new traits wait for you, five at a time. **Keep** confirms a trait; **Not me** rejects it.
+- **To review:** new traits wait for you, five at a time. **Keep** confirms a trait and brings it into your sessions; **Not me** rejects it.
 - **Buttons:** **Pause** / **Resume**, **Learn now**, **Learn from another repository...** (fills your prompt with `/podium-stage learn `) and **Erase...**.
 
 ### Where it is stored
@@ -241,7 +255,7 @@ The tab says when the current folder is excluded and why. An exclusion saved in 
 | `/podium-stage signature pause` / `resume` | stop or restart recording, data kept |
 | `/podium-stage signature exclude <folder>` / `include <folder>` | never record in a folder (absolute or `~` path), or lift that |
 | `/podium-stage signature learn-now` | learn now from what was recorded and from the history |
-| `/podium-stage learn <path>` | also learn from the history of another local repository (a folder, not a URL) |
+| `/podium-stage learn <path>` | also learn from the history of another local repository (a folder, not a URL; the current repository is refused, it is read automatically) |
 | `/podium-stage signature rebuild` | rebuild the index and the profile |
 | `/podium-stage signature forget <trait id>` / `forget #<case number>` | reject a trait or a case |
 | `/podium-stage signature erase` | empty everything stored (repeat to confirm; refused while learning runs) |

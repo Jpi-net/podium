@@ -178,6 +178,11 @@ export type SignatureRepository = {
   state: 'done' | 'learning' | 'pending' | 'excluded' | 'no-identity'
 }
 
+export type SignatureFidelity = {
+  predictions: number
+  hits: number
+}
+
 export type SignatureViewState = {
   consent: SignatureConsent
   draft: SignatureDraft
@@ -198,6 +203,8 @@ export type SignatureViewState = {
   review: SignatureReview[]
   repositories: SignatureRepository[]
   tokensToday: number
+  fidelity: SignatureFidelity
+  isSectionEmpty: boolean
 }
 
 export type HistoryMode = 'journal' | 'couloirs'

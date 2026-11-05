@@ -22,7 +22,7 @@ score   = raw × confidence × recency × scopeFactor × statusFactor
 | `weight` | concept 3, decision 2.5, artifact 2, lens 1.5, phase 1, stack 1 |
 | `recency` | `0.5 ^ (ageMonths / halfLifeMonths)`, `ageMonths` from `lastSeen` |
 | `scopeFactor` | case scope project and same `projectId`: 1.3; scope project and another project: 0.5; scope stack and a shared stack: 1.15; scope stack and no shared stack: 0.6; global: 1 |
-| `statusFactor` | confirmed 1, observed 0.7, stale 0.3, rejected 0 (never returned) |
+| `statusFactor` | confirmed 1, observed 0.7, stale 0.3, rejected 0 (never returned). The ranking keeps stale cases for the learner, but nothing applied to a session uses them: `Recall.applicable` excludes stale and rejected cases, cases of other projects, and cases whose text is not quotable |
 
 Only cases sharing at least one tag or one ancestor with the query are scored (walk the postings of `Q ∪ A(Q)`). Ties: higher confidence, then newer `lastSeen`, then lower id. `top(query, k, minScore)` returns at most `k` with `score ≥ minScore`.
 
@@ -61,7 +61,7 @@ input: { situation: string (required, ≤ 400), tags: string[] (≤ 12), limit: 
 output: text, one block per case: "#142 (confirmed, 7×, global) Situation: … Choice: … Why: … Tags: …"
 ```
 
-The tool adds `Vocabulary.fromText(situation)` to the given tags, ranks with `minScore` 2.0, reads the needed shards (cached per run of the session for 60 seconds) and returns at most `limit` cases. The reranking is done by the calling model (the proxy agent or the main thread): no extra model call.
+The tool adds `Vocabulary.fromText(situation)` to the given tags, ranks with `minScore` 2.0, reads only the shards that hold the hits (a few small files, within the 300 ms bound; no cache) and returns at most `limit` cases. The reranking is done by the calling model (the proxy agent or the main thread): no extra model call.
 
 The description is built once at `session.start` and never changed during the session (changing a tool description loses the prompt cache).
 

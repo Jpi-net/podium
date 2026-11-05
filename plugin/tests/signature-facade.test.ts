@@ -1,11 +1,13 @@
 import { expect, test } from 'claude-code/testing'
+import type { Case } from '../hooks/signature/cases'
 import { Journal } from '../hooks/signature/journal'
 import { SignaturePaths, type SignatureFiles } from '../hooks/signature/paths'
 import { SignatureSettings, type Consent, type Settings } from '../hooks/signature/settings'
 import { Signature, type PromptEvent, type SignaturePorts, type SignatureViewState, type StartInput } from '../hooks/signature/signature'
 import type { Signal } from '../hooks/signature/signals'
 import type { ModelAnswer, ModelPort, ModelRequest } from '../hooks/signature/learner'
-import { Profile } from '../hooks/signature/profile'
+import { Profile, type Trait } from '../hooks/signature/profile'
+import { TagIndex } from '../hooks/signature/tag-index'
 import { ScriptedModel, LearnSeed, MemoryFs } from './fixtures/signature-fs'
 import { SignatureFixtures } from './fixtures/signature'
 
@@ -30,6 +32,9 @@ type RigOptions = {
   dir?: string
   model?: ModelPort
   tops?: Record<string, string>
+  wait?: (ms: number) => Promise<void>
+  remote?: string
+  logOk?: boolean
 }
 
 class FacadeFixture {
@@ -76,7 +81,8 @@ class FacadeFixture {
           const top = target === undefined ? root : options.tops?.[target] ?? ''
           return { exitCode: top === '' ? 128 : 0, stdout: top === '' ? '' : top + '\n' }
         }
-        if (verb === 'config') return { exitCode: 0, stdout: 'git@github.com:acme/app.git\n' }
+        if (verb === 'config') return { exitCode: 0, stdout: `${options.remote ?? 'git@github.com:acme/app.git'}\n` }
+        if (verb === 'log' && options.logOk === true) return { exitCode: 0, stdout: '' }
         if (verb === 'ls-files') return { exitCode: 0, stdout: listing }
         return { exitCode: 1, stdout: '' }
       },
@@ -85,7 +91,7 @@ class FacadeFixture {
       toast: (text) => void toasts.push(text),
       changed: (state) => void changes.push(state),
       model: options.model,
-      wait: () => Promise.resolve()
+      wait: options.wait ?? (() => Promise.resolve())
     }
     return { fs, git, toasts, changes, clock, env, ports }
   }
@@ -2129,4 +2135,905 @@ test('a refused erase keeps the buffer and the counters', async () => {
   expect(text).toBe('A learning run is in progress in another session; try again in a moment.')
   expect(Signature.view().buffered).toBe(1)
   expect(Signature.view().signals).toBe(1)
+})
+
+class ApplyFixture {
+  static isNever = true
+  static pending: (() => void)[] = []
+  static readonly NEVER = (): Promise<void> => (ApplyFixture.isNever ? new Promise<void>((resolve) => void ApplyFixture.pending.push(resolve)) : Promise.resolve())
+
+  static fire(): void {
+    for (const resolve of ApplyFixture.pending.splice(0)) resolve()
+  }
+  static readonly TEXT = 'validate the input and fall back to a default'
+
+  static cases(): Case[] {
+    const filler = Array.from({ length: 20 }, (_, index) => SignatureFixtures.caseOf({ id: index + 1, tags: ['caching'], confidence: 0.9, choice: `Cache number ${index} in memory` }))
+    const strong = SignatureFixtures.caseOf({ id: 100, tags: ['untrusted-input', 'fail-open'], confidence: 0.9, evidenceCount: 3 })
+    const database = SignatureFixtures.caseOf({ id: 101, tags: ['db-schema'], status: 'confirmed', confidence: 0.9, choice: 'Use Postgres for storage', situation: 'Choosing a database for a new service', evidenceCount: 2 })
+    return [...filler, strong, database]
+  }
+
+  static seed(rig: Rig, cases: Case[] = ApplyFixture.cases(), traits: Trait[] = [], stored: Case[] = cases): void {
+    const files = LearnFixture.files()
+    LearnSeed.cases(rig.fs, stored)
+    rig.fs.seed(files.index, TagIndex.serialize(TagIndex.build(cases)))
+    rig.fs.seed(files.profile, Profile.serialize(SignatureFixtures.profile(traits)))
+  }
+
+  static trait(partial: Partial<Trait> = {}): Trait {
+    return SignatureFixtures.trait({ status: 'confirmed', confidence: 0.9, statement: 'Validates every value that crosses a boundary', ...partial })
+  }
+
+  static async started(options: RigOptions = {}, traits: Trait[] = [ApplyFixture.trait()], cases: Case[] = ApplyFixture.cases(), stored: Case[] = cases): Promise<Rig> {
+    ApplyFixture.isNever = true
+    ApplyFixture.pending = []
+    const rig = FacadeFixture.rig(LearnFixture.options({ wait: ApplyFixture.NEVER, ...options }))
+    ApplyFixture.seed(rig, cases, traits, stored)
+    await Signature.start(rig.ports, FacadeFixture.input())
+    return rig
+  }
+
+  static off(flag: 'section' | 'context' | 'hints' | 'proxy'): RigOptions {
+    return { tweak: (settings) => { settings.apply[flag] = false } }
+  }
+
+  static question(answer = 'Postgres'): { questions: unknown[], answers: Record<string, string> } {
+    return { questions: [ApplyFixture.ask()], answers: { 'Which database?': answer } }
+  }
+
+  static ask(): Record<string, unknown> {
+    return { question: 'Which database?', header: 'DB', options: [{ label: 'Postgres' }, { label: 'SQLite' }] }
+  }
+
+  static indexReads(rig: Rig): number {
+    return rig.fs.calls.filter((call) => call === `read ${LearnFixture.files().index}`).length
+  }
+
+  static blocked(rig: Rig): () => void {
+    let release: () => void = () => undefined
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    const original = rig.fs.read.bind(rig.fs)
+    rig.fs.read = async (path: string) => {
+      if (path.includes('/cases/')) await gate
+      return original(path)
+    }
+    return release
+  }
+}
+
+test('the section is built at start from the profile', async () => {
+  // Act
+  await ApplyFixture.started()
+
+  // Assert
+  expect(Signature.sectionText()).toContain('Security: validates every value that crosses a boundary.')
+})
+
+test('the section is empty when the section flag is off', async () => {
+  // Act
+  await ApplyFixture.started(ApplyFixture.off('section'))
+
+  // Assert
+  expect(Signature.sectionText()).toBe('')
+})
+
+test('the section is empty when Signature is paused', async () => {
+  // Act
+  await ApplyFixture.started({ consent: 'paused' })
+
+  // Assert
+  expect(Signature.sectionText()).toBe('')
+})
+
+test('the section is empty in a non-interactive session', async () => {
+  // Arrange
+  const rig = FacadeFixture.rig(LearnFixture.options({ wait: ApplyFixture.NEVER }))
+  ApplyFixture.seed(rig, ApplyFixture.cases(), [ApplyFixture.trait()])
+
+  // Act
+  await Signature.start(rig.ports, FacadeFixture.input({ isInteractive: false }))
+
+  // Assert
+  expect(Signature.sectionText()).toBe('')
+})
+
+test('the section does not change when the profile changes during the session', async () => {
+  // Arrange
+  const rig = await ApplyFixture.started()
+  const frozen = Signature.sectionText()
+
+  // Act
+  rig.fs.seed(LearnFixture.files().profile, Profile.serialize(SignatureFixtures.profile([ApplyFixture.trait({ id: 'git.small', lens: 'git', statement: 'Keeps commits small' })])))
+
+  // Assert
+  expect(Signature.sectionText()).toBe(frozen)
+})
+
+test('the section is recomputed on renew', async () => {
+  // Arrange
+  const rig = await ApplyFixture.started()
+  rig.fs.seed(LearnFixture.files().profile, Profile.serialize(SignatureFixtures.profile([ApplyFixture.trait({ id: 'git.small', lens: 'git', statement: 'Keeps commits small' })])))
+
+  // Act
+  await Signature.renew('s2')
+
+  // Assert
+  expect(Signature.sectionText()).toContain('Git: keeps commits small.')
+  expect(Signature.sectionText()).not.toContain('Security:')
+})
+
+test('the index is not reloaded within a minute even when it changed', async () => {
+  // Arrange
+  const rig = await ApplyFixture.started()
+  const first = ApplyFixture.indexReads(rig)
+  rig.fs.seed(LearnFixture.files().index, TagIndex.serialize(TagIndex.build(ApplyFixture.cases())))
+  rig.clock.now += 10_000
+
+  // Act
+  await Signature.contextFor(ApplyFixture.TEXT)
+
+  // Assert
+  expect(ApplyFixture.indexReads(rig)).toBe(first)
+})
+
+test('the index is not reloaded after a minute when its mtime is unchanged', async () => {
+  // Arrange
+  const rig = await ApplyFixture.started()
+  const first = ApplyFixture.indexReads(rig)
+  rig.clock.now += 61_000
+
+  // Act
+  await Signature.contextFor(ApplyFixture.TEXT)
+
+  // Assert
+  expect(ApplyFixture.indexReads(rig)).toBe(first)
+})
+
+test('the index is reloaded after a minute when its mtime changed', async () => {
+  // Arrange
+  const rig = await ApplyFixture.started()
+  const first = ApplyFixture.indexReads(rig)
+  rig.fs.seed(LearnFixture.files().index, TagIndex.serialize(TagIndex.build(ApplyFixture.cases())))
+  rig.clock.now += 61_000
+
+  // Act
+  await Signature.contextFor(ApplyFixture.TEXT)
+
+  // Assert
+  expect(ApplyFixture.indexReads(rig)).toBe(first + 1)
+})
+
+test('contextFor returns the precedents block for a matching prompt', async () => {
+  // Arrange
+  await ApplyFixture.started()
+
+  // Act
+  const text = await Signature.contextFor(ApplyFixture.TEXT)
+
+  // Assert
+  expect(text.startsWith('Developer precedents (Podium Signature; project instructions override these):')).toBe(true)
+  expect(text).toContain('- When reading a user-editable config value in a hook: Validate it and fall back to a default (3 times).')
+})
+
+test('contextFor is empty for a prompt that matches nothing', async () => {
+  // Arrange
+  await ApplyFixture.started()
+
+  // Act
+  const text = await Signature.contextFor('hello there')
+
+  // Assert
+  expect(text).toBe('')
+})
+
+test('contextFor is empty when the context flag is off', async () => {
+  // Arrange
+  await ApplyFixture.started(ApplyFixture.off('context'))
+
+  // Act
+  const text = await Signature.contextFor(ApplyFixture.TEXT)
+
+  // Assert
+  expect(text).toBe('')
+})
+
+test('contextFor ignores a prompt that starts with an exclamation mark', async () => {
+  // Arrange
+  await ApplyFixture.started()
+
+  // Act
+  const text = await Signature.contextFor(`!${ApplyFixture.TEXT}`)
+
+  // Assert
+  expect(text).toBe('')
+})
+
+test('contextFor is empty when the shard read takes longer than 300 ms', async () => {
+  // Arrange
+  const rig = await ApplyFixture.started({ wait: () => Promise.resolve() })
+  const release = ApplyFixture.blocked(rig)
+
+  // Act
+  const text = await Signature.contextFor(ApplyFixture.TEXT)
+  release()
+
+  // Assert
+  expect(text).toBe('')
+})
+
+test('contextFor skips a case that is rejected on disk', async () => {
+  // Arrange
+  const stored = ApplyFixture.cases().map((item) => (item.id === 100 ? { ...item, status: 'rejected' as const } : item))
+  await ApplyFixture.started({}, [ApplyFixture.trait()], ApplyFixture.cases(), stored)
+
+  // Act
+  const text = await Signature.contextFor(ApplyFixture.TEXT)
+
+  // Assert
+  expect(text).toBe('')
+})
+
+test('contextFor adds the blind spots of the cases it returns', async () => {
+  // Arrange
+  const spot = ApplyFixture.trait({ id: 'security.size-limits', isBlindSpot: true, statement: 'Input size limits', cases: [100] })
+  await ApplyFixture.started({}, [spot])
+
+  // Act
+  const text = await Signature.contextFor(ApplyFixture.TEXT)
+
+  // Assert
+  expect(text).toContain('Reminder: Input size limits.')
+})
+
+test('contextFor records a use signal for the cases it returns', async () => {
+  // Arrange
+  const rig = await ApplyFixture.started()
+  await Signature.contextFor(ApplyFixture.TEXT)
+
+  // Act
+  await Signature.flush()
+
+  // Assert
+  const text = rig.fs.text(SignaturePaths.journalFile(LearnFixture.DIR, FacadeFixture.AT, 's1', 0)) ?? ''
+  const uses = text.split('\n').filter((line) => line !== '').map((line) => JSON.parse(line) as Signal).filter((signal) => signal.kind === 'use')
+  expect(uses).toHaveLength(1)
+  expect(uses[0]?.data.caseIds).toEqual([100])
+})
+
+test('hintFor predicts the usual choice and words the notice', async () => {
+  // Arrange
+  await ApplyFixture.started()
+
+  // Act
+  const hint = await Signature.hintFor({ questions: [ApplyFixture.ask()] })
+
+  // Assert
+  expect(hint.notice).toBe('Signature: you usually choose "Postgres"')
+  expect(hint.predictions).toEqual({ 'Which database?': 'Postgres' })
+})
+
+test('hintFor is empty when the hints flag is off', async () => {
+  // Arrange
+  await ApplyFixture.started(ApplyFixture.off('hints'))
+
+  // Act
+  const hint = await Signature.hintFor({ questions: [ApplyFixture.ask()] })
+
+  // Assert
+  expect(hint).toEqual({ notice: '', predictions: {} })
+})
+
+test('hintFor is empty for a question without two options', async () => {
+  // Arrange
+  await ApplyFixture.started()
+
+  // Act
+  const hint = await Signature.hintFor({ questions: [{ question: 'Which database?', options: [{ label: 'Postgres' }] }] })
+
+  // Assert
+  expect(hint.notice).toBe('')
+})
+
+test('an answer that differs from the prediction counts as a miss', async () => {
+  // Arrange
+  await ApplyFixture.started()
+  const hint = await Signature.hintFor({ questions: [ApplyFixture.ask()] })
+
+  // Act
+  Signature.onQuestion(ApplyFixture.question('SQLite'), hint.predictions)
+
+  // Assert
+  expect(Signature.view().fidelity).toEqual({ predictions: 1, hits: 0 })
+})
+
+test('an answer that matches the prediction counts as a hit', async () => {
+  // Arrange
+  await ApplyFixture.started()
+  const hint = await Signature.hintFor({ questions: [ApplyFixture.ask()] })
+
+  // Act
+  Signature.onQuestion(ApplyFixture.question('Postgres'), hint.predictions)
+
+  // Assert
+  expect(Signature.view().fidelity).toEqual({ predictions: 1, hits: 1 })
+})
+
+test('ending the session saves the prediction counters into the profile', async () => {
+  // Arrange
+  const rig = await ApplyFixture.started()
+  const hint = await Signature.hintFor({ questions: [ApplyFixture.ask()] })
+  Signature.onQuestion(ApplyFixture.question('SQLite'), hint.predictions)
+  ApplyFixture.isNever = false
+
+  // Act
+  await Signature.end()
+
+  // Assert
+  expect(Profile.parse(rig.fs.text(LearnFixture.files().profile) ?? '').stats).toEqual({ predictions: 1, hits: 0, missed: 1 })
+})
+
+test('the counters are reset after they are saved', async () => {
+  // Arrange
+  const rig = await ApplyFixture.started()
+  const hint = await Signature.hintFor({ questions: [ApplyFixture.ask()] })
+  Signature.onQuestion(ApplyFixture.question('Postgres'), hint.predictions)
+  ApplyFixture.isNever = false
+  await Signature.end()
+
+  // Act
+  await Signature.end()
+
+  // Assert
+  expect(Profile.parse(rig.fs.text(LearnFixture.files().profile) ?? '').stats).toEqual({ predictions: 1, hits: 1, missed: 0 })
+  expect(Signature.view().fidelity).toEqual({ predictions: 1, hits: 1 })
+})
+
+test('the counters are not saved while a learning run is in progress', async () => {
+  // Arrange
+  const gate = LearnFixture.gate()
+  const rig = FacadeFixture.rig(LearnFixture.options({ model: gate.port, wait: () => Promise.resolve() }))
+  LearnSeed.prompts(rig.fs, 25)
+  ApplyFixture.seed(rig, ApplyFixture.cases(), [ApplyFixture.trait()])
+  await Signature.start(rig.ports, FacadeFixture.input())
+  await Signature.tick(LearnFixture.idle(rig))
+  await gate.arrived()
+  Signature.onQuestion(ApplyFixture.question('Postgres'), { 'Which database?': 'Postgres' })
+
+  // Act
+  await Signature.end()
+
+  // Assert
+  expect(Profile.parse(rig.fs.text(LearnFixture.files().profile) ?? '').stats.predictions).toBe(0)
+  gate.release(ScriptedModel.failed('stopped'))
+  await Signature.whenIdle()
+})
+
+test('the recall tool is offered when the proxy or the section is on', async () => {
+  // Arrange
+  await ApplyFixture.started(ApplyFixture.off('proxy'))
+
+  // Act
+  const spec = Signature.recallSpec()
+
+  // Assert
+  expect(spec?.name).toBe('recall')
+  expect(spec?.inputSchema.required).toEqual(['situation'])
+})
+
+test('the recall tool is not offered when the proxy and the section are both off', async () => {
+  // Arrange
+  await ApplyFixture.started({ tweak: (settings) => { settings.apply.proxy = false; settings.apply.section = false } })
+
+  // Act
+  const spec = Signature.recallSpec()
+
+  // Assert
+  expect(spec).toBeUndefined()
+})
+
+test('the recall tool is not offered when Signature is paused', async () => {
+  // Arrange
+  await ApplyFixture.started({ consent: 'paused' })
+
+  // Act
+  const spec = Signature.recallSpec()
+
+  // Assert
+  expect(spec).toBeUndefined()
+})
+
+test('the proxy agent is offered only when the proxy flag is on and Signature is applying', async () => {
+  // Arrange
+  await ApplyFixture.started()
+
+  // Act
+  const isOffered = Signature.isProxyOffered()
+
+  // Assert
+  expect(isOffered).toBe(true)
+})
+
+test('the proxy agent is not offered when the proxy flag is off', async () => {
+  // Arrange
+  await ApplyFixture.started(ApplyFixture.off('proxy'))
+
+  // Act
+  const isOffered = Signature.isProxyOffered()
+
+  // Assert
+  expect(isOffered).toBe(false)
+})
+
+test('the proxy agent is not offered when Signature is not applying', async () => {
+  // Arrange
+  await ApplyFixture.started({ consent: 'declined' })
+
+  // Act
+  const isOffered = Signature.isProxyOffered()
+
+  // Assert
+  expect(isOffered).toBe(false)
+})
+
+test('recall says Signature is not active when it is not applying', async () => {
+  // Arrange
+  await ApplyFixture.started({ consent: 'paused' })
+
+  // Act
+  const text = await Signature.recall({ situation: 'validate input' })
+
+  // Assert
+  expect(text).toBe('Signature is not active in this session.')
+})
+
+test('recall says it is not active when the proxy and the section are both off', async () => {
+  // Arrange
+  await ApplyFixture.started({ tweak: (settings) => { settings.apply.proxy = false; settings.apply.section = false } })
+
+  // Act
+  const text = await Signature.recall({ situation: 'validate input' })
+
+  // Assert
+  expect(text).toBe('Signature is not active in this session.')
+})
+
+test('recall asks for a situation when the input is bad', async () => {
+  // Arrange
+  await ApplyFixture.started()
+
+  // Act
+  const text = await Signature.recall({ tags: ['hook'] })
+
+  // Assert
+  expect(text).toBe('Give the situation in one sentence.')
+})
+
+test('recall returns the matching cases formatted', async () => {
+  // Arrange
+  await ApplyFixture.started()
+
+  // Act
+  const text = await Signature.recall({ situation: ApplyFixture.TEXT, tags: ['untrusted-input'] })
+
+  // Assert
+  expect(text.startsWith('#100 (observed, 3×, global)')).toBe(true)
+})
+
+test('recall says no precedent when nothing matches', async () => {
+  // Arrange
+  await ApplyFixture.started()
+
+  // Act
+  const text = await Signature.recall({ situation: 'nothing related here at all' })
+
+  // Assert
+  expect(text).toBe('No precedent found for this situation.')
+})
+
+test('recall still works when only the section flag is on', async () => {
+  // Arrange
+  await ApplyFixture.started(ApplyFixture.off('proxy'))
+
+  // Act
+  const text = await Signature.recall({ situation: ApplyFixture.TEXT, tags: ['untrusted-input'] })
+
+  // Assert
+  expect(text.startsWith('#100 ')).toBe(true)
+})
+
+class ProjectFixture {
+  static other(partial: Partial<Case>): Case[] {
+    return ApplyFixture.cases().map((item) => (item.id === (partial.id ?? 100) ? { ...item, ...partial } : item))
+  }
+}
+
+test('a project case of another project is never in the context', async () => {
+  // Arrange
+  const cases = ProjectFixture.other({ id: 100, scope: 'project', projectId: 'zzother1' })
+  await ApplyFixture.started({}, [ApplyFixture.trait()], cases)
+
+  // Act
+  const text = await Signature.contextFor(ApplyFixture.TEXT)
+
+  // Assert
+  expect(text).toBe('')
+})
+
+test('a project case of another project is never used for a hint', async () => {
+  // Arrange
+  const cases = ProjectFixture.other({ id: 101, scope: 'project', projectId: 'zzother1' })
+  await ApplyFixture.started({}, [ApplyFixture.trait()], cases)
+
+  // Act
+  const hint = await Signature.hintFor({ questions: [ApplyFixture.ask()] })
+
+  // Assert
+  expect(hint).toEqual({ notice: '', predictions: {} })
+})
+
+test('a project case of another project is never returned by recall', async () => {
+  // Arrange
+  const cases = ProjectFixture.other({ id: 100, scope: 'project', projectId: 'zzother1' })
+  await ApplyFixture.started({}, [ApplyFixture.trait()], cases)
+
+  // Act
+  const text = await Signature.recall({ situation: ApplyFixture.TEXT, tags: ['untrusted-input'] })
+
+  // Assert
+  expect(text).toBe('No precedent found for this situation.')
+})
+
+test('a stale case is never in the context', async () => {
+  // Arrange
+  const stored = ApplyFixture.cases().map((item) => (item.id === 100 ? { ...item, status: 'stale' as const } : item))
+  await ApplyFixture.started({}, [ApplyFixture.trait()], ApplyFixture.cases(), stored)
+
+  // Act
+  const text = await Signature.contextFor(ApplyFixture.TEXT)
+
+  // Assert
+  expect(text).toBe('')
+})
+
+test('a slow index refresh still gives an empty context within the bound', async () => {
+  // Arrange
+  const rig = await ApplyFixture.started()
+  const root = LearnFixture.files().root
+  const original = rig.fs.list.bind(rig.fs)
+  rig.fs.list = async (path: string) => (path === root ? new Promise(() => undefined) : original(path))
+  rig.clock.now += 61_000
+
+  // Act
+  const pending = Signature.contextFor(ApplyFixture.TEXT)
+  ApplyFixture.fire()
+  const text = await pending
+
+  // Assert
+  expect(text).toBe('')
+})
+
+test('contextFor keeps its settings for five seconds and then follows a pause made by another window', async () => {
+  // Arrange
+  const rig = await ApplyFixture.started()
+  DiskFixture.declined(rig, 'paused')
+  rig.clock.now += 4_000
+  const before = await Signature.contextFor(ApplyFixture.TEXT)
+  rig.clock.now += 2_000
+
+  // Act
+  const after = await Signature.contextFor(ApplyFixture.TEXT)
+
+  // Assert
+  expect(before).toContain('Developer precedents')
+  expect(after).toBe('')
+})
+
+test('recall accepts the situation inside an input object', async () => {
+  // Arrange
+  await ApplyFixture.started()
+
+  // Act
+  const text = await Signature.recall({ input: { situation: ApplyFixture.TEXT, tags: ['untrusted-input'] } })
+
+  // Assert
+  expect(text.startsWith('#100 ')).toBe(true)
+})
+
+test('recall stops after another window pauses Signature on disk', async () => {
+  // Arrange
+  const rig = await ApplyFixture.started()
+  DiskFixture.declined(rig, 'paused')
+  rig.clock.now += 6_000
+
+  // Act
+  const text = await Signature.recall({ situation: ApplyFixture.TEXT, tags: ['untrusted-input'] })
+
+  // Assert
+  expect(text).toBe('Signature is not active in this session.')
+})
+
+test('a prediction is scored when capture is off and hints are on', async () => {
+  // Arrange
+  await ApplyFixture.started({ tweak: (settings) => { settings.capture.sessions = false } })
+  const hint = await Signature.hintFor({ questions: [ApplyFixture.ask()] })
+
+  // Act
+  Signature.onQuestion(ApplyFixture.question('Postgres'), hint.predictions)
+
+  // Assert
+  expect(Signature.isCapturing()).toBe(false)
+  expect(Signature.view().fidelity).toEqual({ predictions: 1, hits: 1 })
+})
+
+test('a failed stats write restores the pending counts', async () => {
+  // Arrange
+  const rig = await ApplyFixture.started()
+  Signature.onQuestion(ApplyFixture.question('SQLite'), { 'Which database?': 'Postgres' })
+  rig.fs.failWrite(LearnFixture.files().profile)
+  ApplyFixture.isNever = false
+
+  // Act
+  await Signature.end()
+
+  // Assert
+  expect(Profile.parse(rig.fs.text(LearnFixture.files().profile) ?? '').stats.predictions).toBe(0)
+  expect(Signature.view().fidelity).toEqual({ predictions: 1, hits: 0 })
+})
+
+test('the pending counts are kept while Signature is paused', async () => {
+  // Arrange
+  const rig = await ApplyFixture.started()
+  Signature.onQuestion(ApplyFixture.question('Postgres'), { 'Which database?': 'Postgres' })
+  ApplyFixture.isNever = false
+  await Signature.pause()
+
+  // Act
+  await Signature.end()
+
+  // Assert
+  expect(Profile.parse(rig.fs.text(LearnFixture.files().profile) ?? '').stats.predictions).toBe(0)
+  expect(Signature.view().fidelity).toEqual({ predictions: 1, hits: 1 })
+})
+
+test('the pending counts are kept when the hints flag is turned off on disk', async () => {
+  // Arrange
+  const rig = await ApplyFixture.started()
+  Signature.onQuestion(ApplyFixture.question('Postgres'), { 'Which database?': 'Postgres' })
+  const settings = SignatureSettings.defaults()
+  settings.consent = 'enabled'
+  settings.apply.hints = false
+  rig.fs.seed(LearnFixture.files().settings, SignatureSettings.serialize(settings))
+  rig.clock.now += 6_000
+  await Signature.contextFor(ApplyFixture.TEXT)
+  ApplyFixture.isNever = false
+
+  // Act
+  await Signature.end()
+
+  // Assert
+  expect(Profile.parse(rig.fs.text(LearnFixture.files().profile) ?? '').stats.predictions).toBe(0)
+  expect(Signature.view().fidelity.predictions).toBe(1)
+})
+
+test('ending the session while a run settles saves the counters exactly once', async () => {
+  // Arrange
+  const gate = LearnFixture.gate()
+  const rig = FacadeFixture.rig(LearnFixture.options({ model: gate.port, wait: () => Promise.resolve() }))
+  LearnSeed.prompts(rig.fs, 25)
+  ApplyFixture.seed(rig, ApplyFixture.cases(), [ApplyFixture.trait()])
+  await Signature.start(rig.ports, FacadeFixture.input())
+  await Signature.tick(LearnFixture.idle(rig))
+  await gate.arrived()
+  Signature.onQuestion(ApplyFixture.question('Postgres'), { 'Which database?': 'Postgres' })
+
+  // Act
+  const ending = Signature.end()
+  gate.release(ScriptedModel.failed('stopped'))
+  await Promise.all([ending, Signature.whenIdle()])
+  await Signature.end()
+
+  // Assert
+  expect(Profile.parse(rig.fs.text(LearnFixture.files().profile) ?? '').stats.predictions).toBe(1)
+})
+
+test('the proxy offer stays frozen when Signature is paused mid-session', async () => {
+  // Arrange
+  await ApplyFixture.started()
+  await Signature.pause()
+
+  // Act
+  const isOffered = Signature.isProxyOffered()
+
+  // Assert
+  expect(isOffered).toBe(true)
+})
+
+test('the proxy offer changes after renew', async () => {
+  // Arrange
+  await ApplyFixture.started()
+  await Signature.pause()
+
+  // Act
+  await Signature.renew('s2')
+
+  // Assert
+  expect(Signature.isProxyOffered()).toBe(false)
+})
+
+test('the recall hint in the section follows whether the recall tool is registered', async () => {
+  // Arrange
+  await ApplyFixture.started()
+  const without = Signature.sectionText()
+
+  // Act
+  await Signature.markRecall(true)
+
+  // Assert
+  expect(without).not.toContain('recall tool')
+  expect(Signature.sectionText()).toContain('Use the recall tool (mcp__podium__recall)')
+})
+
+class ManualFixture {
+  static async learned(remote: string, folder: string): Promise<{ manual: string[], auto: string[] }> {
+    const model = LearnFixture.valid()
+    const base = LearnFixture.options({ model: model.port, remote, logOk: true, tops: { '/work/other': '/work/other', '/work/app': '/work/app' } })
+    const rig = FacadeFixture.rig({ ...base, tweak: () => undefined })
+    rig.fs.directories.add('/work/other')
+    rig.fs.directories.add('/work/app')
+    await Signature.start(rig.ports, FacadeFixture.input())
+    await Signature.command(`learn ${folder}`)
+    await Signature.whenIdle()
+    const cursors = [...rig.fs.files.entries()].filter(([path]) => path.includes('/history/'))
+    const named = (source: string) => cursors.filter(([, file]) => (JSON.parse(file.text) as { source: string }).source === source).map(([path]) => path.slice(path.lastIndexOf('/') + 1))
+    return { manual: named('manual'), auto: named('auto') }
+  }
+}
+
+test('the same folder learned under two different remotes gets the same manual id', async () => {
+  // Act
+  const first = await ManualFixture.learned('git@github.com:acme/app.git', '/work/other')
+  const second = await ManualFixture.learned('git@gitlab.com:team/renamed.git', '/work/other')
+
+  // Assert
+  expect(first.manual).toHaveLength(1)
+  expect(second.manual).toEqual(first.manual)
+})
+
+test('a manual repository id differs from the automatic id of the current repository', async () => {
+  // Act
+  const learned = await ManualFixture.learned('git@github.com:acme/app.git', '/work/other')
+
+  // Assert
+  expect(learned.auto).toHaveLength(1)
+  expect(learned.manual).toHaveLength(1)
+  expect(learned.manual[0]).not.toBe(learned.auto[0])
+})
+
+class SectionStateFixture {
+  static cases(): Case[] {
+    return [...ApplyFixture.cases(), SignatureFixtures.caseOf({ id: 150, tags: ['caching'], confidence: 0.9, projects: ['other-repo'] })]
+  }
+
+  static observed(cases: number[]): Trait {
+    return ApplyFixture.trait({ status: 'observed', confidence: 0.9, cases })
+  }
+
+  static confirmed(cases: number[]): Trait {
+    return ApplyFixture.trait({ status: 'confirmed', confidence: 0.9, cases })
+  }
+}
+
+test('the section is flagged empty for an observed trait backed by one project', async () => {
+  // Act
+  await ApplyFixture.started({}, [SectionStateFixture.observed([100])], SectionStateFixture.cases())
+
+  // Assert
+  expect(Signature.view().isSectionEmpty).toBe(true)
+})
+
+test('the section is not flagged empty once a trait qualifies', async () => {
+  // Act
+  await ApplyFixture.started({}, [SectionStateFixture.confirmed([100, 150])], SectionStateFixture.cases())
+
+  // Assert
+  expect(Signature.view().isSectionEmpty).toBe(false)
+})
+
+test('the section is not flagged empty for a confirmed trait', async () => {
+  // Act
+  await ApplyFixture.started({}, [ApplyFixture.trait({ status: 'confirmed', cases: [100] })], SectionStateFixture.cases())
+
+  // Assert
+  expect(Signature.view().isSectionEmpty).toBe(false)
+})
+
+test('the section is not flagged empty when the section flag is off', async () => {
+  // Act
+  await ApplyFixture.started(ApplyFixture.off('section'), [SectionStateFixture.observed([100])], SectionStateFixture.cases())
+
+  // Assert
+  expect(Signature.view().isSectionEmpty).toBe(false)
+})
+
+test('the section is not flagged empty when the profile has no live trait', async () => {
+  // Act
+  await ApplyFixture.started({}, [], SectionStateFixture.cases())
+
+  // Assert
+  expect(Signature.view().isSectionEmpty).toBe(false)
+})
+
+test('an observed trait never puts text in the section even with two projects behind it', async () => {
+  // Act
+  await ApplyFixture.started({}, [SectionStateFixture.observed([100, 150])], SectionStateFixture.cases())
+
+  // Assert
+  expect(Signature.sectionText()).toBe('')
+  expect(Signature.view().isSectionEmpty).toBe(true)
+})
+
+test('keeping an observed trait fills the section after renew', async () => {
+  // Arrange
+  await ApplyFixture.started({}, [SectionStateFixture.observed([100, 150])], SectionStateFixture.cases())
+  ApplyFixture.isNever = false
+  await Signature.keep('security.validate-boundaries')
+
+  // Act
+  await Signature.renew('s2')
+
+  // Assert
+  expect(Signature.sectionText()).toContain('Security: validates every value that crosses a boundary.')
+  expect(Signature.view().isSectionEmpty).toBe(false)
+})
+
+class CurrentFixture {
+  static async rig(isHistory: boolean): Promise<Rig> {
+    const model = LearnFixture.valid()
+    const base = LearnFixture.options({ model: model.port, logOk: true, tops: { '/work/app': '/work/app' } })
+    const rig = FacadeFixture.rig({ ...base, tweak: (settings) => { settings.capture.history = isHistory } })
+    rig.fs.directories.add('/work/app')
+    await Signature.start(rig.ports, FacadeFixture.input())
+    return rig
+  }
+
+  static logs(rig: Rig): number {
+    return rig.git.filter((call) => call.argv.includes('log')).length
+  }
+}
+
+test('learning the current repository is refused while its history is read automatically', async () => {
+  // Arrange
+  await CurrentFixture.rig(true)
+
+  // Act
+  const text = await Signature.command('learn /work/app')
+
+  // Assert
+  expect(text).toBe('This repository is already read automatically.')
+  expect(Signature.view().learning.isRunning).toBe(false)
+})
+
+test('learning the current repository makes no git log call', async () => {
+  // Arrange
+  const rig = await CurrentFixture.rig(true)
+
+  // Act
+  await Signature.command('learn /work/app')
+  await Signature.whenIdle()
+
+  // Assert
+  expect(CurrentFixture.logs(rig)).toBe(0)
+})
+
+test('learning the current repository is allowed when its history is not read automatically', async () => {
+  // Arrange
+  await CurrentFixture.rig(false)
+
+  // Act
+  const text = await Signature.command('learn /work/app')
+  await Signature.whenIdle()
+
+  // Assert
+  expect(text).toBe('Signature is learning from app. Progress shows in the Signature tab.')
 })

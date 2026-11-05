@@ -237,6 +237,7 @@ class Runtime {
   static notNowAt = 0
   static signatureStart: Promise<void> | undefined
   static signatureGeneration = 0
+  static registerRecall: () => Promise<void> = async () => undefined
 
   static io(): Io {
     if (!Runtime.ports) throw new Error('podium: engine ports are not ready')
@@ -1560,7 +1561,7 @@ class Flow {
         .then(() => Runtime.io().invalidate())
     return {
       toggle: key => Signature.toggle(key),
-      enable: () => say(Signature.enable()),
+      enable: () => say(Signature.enable().then(async text => (await Runtime.registerRecall(), text))),
       notNow: () => {
         Runtime.notNowAt = Date.now()
         Signature.remember(Runtime.introAt, Runtime.notNowAt)
@@ -1569,7 +1570,7 @@ class Flow {
       },
       never: () => say(Signature.never()),
       pause: () => say(Signature.pause()),
-      resume: () => say(Signature.resume()),
+      resume: () => say(Signature.resume().then(async text => (await Runtime.registerRecall(), text))),
       erase: () => say(Signature.erase()),
       learnNow: () => say(Signature.learnNow()),
       learnFrom: () => void Runtime.io().fill('/podium-stage learn ').catch(() => undefined),
@@ -1620,7 +1621,27 @@ class Flow {
     }
   }
 
-  static signToolCall(e: unknown, ran: unknown): void {
+  static async signHint(e: unknown): Promise<{ notice: string; predictions: Record<string, string> }> {
+    try {
+      return await Signature.hintFor(e)
+    } catch {
+      return { notice: '', predictions: {} }
+    }
+  }
+
+  static async signContext(e: unknown): Promise<string> {
+    try {
+      const input = e as Loose
+      const origin = input['origin'] as Loose | undefined
+      if (input['command'] !== undefined || input['isMeta'] === true || Flow.isTaskNotification(e)) return ''
+      if (origin?.['kind'] !== 'composer' && origin?.['kind'] !== 'bridge') return ''
+      return await Signature.contextFor(Flow.field(e, 'text'))
+    } catch {
+      return ''
+    }
+  }
+
+  static signToolCall(e: unknown, ran: unknown, predicted: Record<string, string> = {}): void {
     try {
       const tool = Flow.field(e, 'tool')
       if (tool !== 'AskUserQuestion' && tool !== 'ExitPlanMode') return
@@ -1628,7 +1649,7 @@ class Flow {
       const result = (typeof outcome['result'] === 'object' && outcome['result'] !== null ? outcome['result'] : {}) as Loose
       if (tool === 'AskUserQuestion') {
         if (outcome['result'] === undefined) return
-        Signature.onQuestion({ questions: result['questions'], answers: result['answers'], response: result['response'], afkTimeoutMs: result['afkTimeoutMs'] })
+        Signature.onQuestion({ questions: result['questions'], answers: result['answers'], response: result['response'], afkTimeoutMs: result['afkTimeoutMs'] }, predicted)
         return
       }
       const isRefused = outcome['deny'] !== undefined || outcome['isError'] === true
@@ -3234,6 +3255,17 @@ export const register: Register = on => {
         }),
       )
       await Signature.start(ports, { cwd: e.cwd, session, isInteractive: e.isInteractive })
+      Runtime.registerRecall = async () => {
+        const spec = Signature.recallSpec()
+        if (spec === undefined || Signature.isRecallRegistered()) return
+        try {
+          await $.tool.register({ name: spec.name, description: spec.description, inputSchema: spec.inputSchema, isDeferred: false })
+          await Signature.markRecall(true)
+        } catch {
+          return
+        }
+      }
+      if (generation === Runtime.signatureGeneration) await Runtime.registerRecall()
       if (generation === Runtime.signatureGeneration) await Flow.introduce()
     })().catch(() => undefined)
     if (!Runtime.view.isClosed && Flow.mayAutoOpen()) void Flow.placePane()
@@ -3317,6 +3349,7 @@ export const register: Register = on => {
       if (Flow.SIGNATURE_CONSENT.includes(word) && !isOwn) return { text: 'Run this command yourself.' }
       await Flow.awaitSignature((ms, fn) => $.clock.after(ms, fn))
       const text = await Signature.command(e.args.trim().slice('signature'.length))
+      void Runtime.registerRecall().catch(() => undefined)
       if (text !== '') return { text }
     }
     const alias = Flow.ALIASES[arg]
@@ -3335,11 +3368,30 @@ export const register: Register = on => {
     }
     if (e.tool === 'Bash' && Flow.isTreeCommand(pending)) pending.gitBefore = await Flow.treeState()
     void Flow.enqueue(() => Flow.before(e, pending))
+    let predicted: Record<string, string> = {}
+    if (e.tool === 'AskUserQuestion') {
+      const hint = await Flow.signHint(e)
+      predicted = hint.predictions
+      if (hint.notice !== '') Flow.sign(() => $.ui.notice(e.tool_use_id, hint.notice))
+    }
     const ran = await next(e)
-    Flow.signToolCall(e, ran)
+    Flow.signToolCall(e, ran, predicted)
     await Flow.enqueue(() => Flow.after(e, ran, pending))
     if (/(^|[\\/])\.claude[\\/]/.test(pending.path)) void Flow.loadProject()
     return ran
+  })
+
+  on('tool.call', { tool: 'mcp__podium__recall' }, async ($, e) => ({ result: await Signature.recall(e) }))
+
+  on('agent.offer', { agent: 'podium:developer-proxy' }, async ($, e, next) => {
+    const r = await next(e)
+    return Signature.isProxyOffered() ? r : { ...r, isOffered: false }
+  })
+
+  on('prompt.compose', async ($, e, next) => {
+    const r = await next(e)
+    const text = Signature.sectionText()
+    return text === '' ? r : { ...r, sections: [...r.sections, { id: 'podium:signature', scope: 'session' as const, text }] }
   })
 
   on('agent.spawn', async ($, e, next) => {
@@ -3367,7 +3419,7 @@ export const register: Register = on => {
     const r = await next(e)
     if (e.reason === 'clear') {
       await Promise.race([
-        $.session.id().then(id => Signature.renew(id)),
+        $.session.id().then(id => Signature.renew(id)).then(() => Runtime.registerRecall()),
         new Promise<void>(resolve => {
           try {
             $.clock.after(2000, () => resolve())
@@ -3381,8 +3433,9 @@ export const register: Register = on => {
   })
 
   on('prompt.submit', async ($, e, next) => {
+    const block = await Flow.signContext(e)
     const proceed = async () => {
-      const r = await next(e)
+      const r = await next(block === '' ? e : { ...e, context: [...(e.context ?? []), block] })
       Flow.signPrompt(e, r)
       return r
     }

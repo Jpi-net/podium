@@ -1,3 +1,4 @@
+import { Sanitizer } from './sanitizer'
 import { Vocabulary, type Facet, type VocabularyData } from './vocabulary'
 
 export type Scope = 'global' | 'stack' | 'project'
@@ -133,6 +134,10 @@ export class Cases {
     return Cases.breaksFloor(text, Cases.NEAR)
   }
 
+  static isForeign(text: string): boolean {
+    return Cases.SCRIPT.test(text.slice(0, Cases.NORMALISED).normalize('NFKD').replace(Cases.MARKS, ''))
+  }
+
   static confidence(evidenceCount: number, counterCount: number, projects: number, isConfirmedByUser: boolean): number {
     const e = Math.max(0, Number(evidenceCount) || 0)
     const c = Math.max(0, Number(counterCount) || 0)
@@ -215,6 +220,7 @@ export class Cases {
     if (!isAnchored) return Cases.reject('concept')
     const evidence = Cases.evidence(raw.evidence)
     if (evidence === undefined) return Cases.reject('evidence')
+    if ([situation, choice, why, ...options].some((part) => Sanitizer.isInjection(part))) return Cases.reject('injection')
     if ([situation, choice, why, ...options].some((part) => Cases.isForeign(part))) return Cases.reject('script')
     if ([situation, choice, why, ...options].some((part) => Cases.isUnsafe(part))) return Cases.reject('unsafe')
     if (Cases.breaksFloor([situation, choice, why, ...options].join('. '), Infinity)) return Cases.reject('unsafe')
@@ -266,7 +272,7 @@ export class Cases {
 
   private static bounded(value: unknown, min: number, max: number): string | undefined {
     if (typeof value !== 'string') return undefined
-    const text = value.trim()
+    const text = Sanitizer.flat(value)
     return text.length >= min && text.length <= max ? text : undefined
   }
 
@@ -421,10 +427,6 @@ export class Cases {
       if (width !== 0 && !Cases.DOUBLERS.has(words[i - 1] ?? '')) return true
     }
     return false
-  }
-
-  private static isForeign(text: string): boolean {
-    return Cases.SCRIPT.test(text.slice(0, Cases.NORMALISED).normalize('NFKD').replace(Cases.MARKS, ''))
   }
 
   private static isNegatedPositive(text: string, start: number): boolean {
