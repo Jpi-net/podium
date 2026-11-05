@@ -2,6 +2,14 @@ import { expect, test } from 'claude-code/testing'
 import { Vocabulary, type Facet, type VocabularyData, type VocabularyOverlay } from '../hooks/signature/vocabulary'
 
 class VocabularyFixture {
+  static crowded(): VocabularyOverlay {
+    const tags: Record<string, unknown> = {}
+    for (let i = 0; i < 50; i += 1) {
+      tags[`t${i}`] = { facet: 'artifact', aliases: [`alias ${i}`], paths: Array.from({ length: 8 }, (_, j) => `^dir${i}x${j}/`) }
+    }
+    return Vocabulary.parseOverlay(JSON.stringify({ revision: 1, tags }))
+  }
+
   static data(tags: VocabularyData['tags'], revision = 1): VocabularyData {
     return { revision, tags }
   }
@@ -677,4 +685,32 @@ test('fromPaths still tags pyproject.toml as a dependency', () => {
 test('fromPaths still tags plugin.json as a manifest', () => {
   // Assert
   expect(Vocabulary.fromPaths(Vocabulary.base(), ['plugin/.claude-plugin/plugin.json'])).toContain('manifest')
+})
+
+test('parseOverlay keeps two hundred path patterns in total', () => {
+  // Act
+  const overlay = VocabularyFixture.crowded()
+
+  // Assert
+  const total = Object.values(overlay.tags).reduce((sum, def) => sum + def.paths.length, 0)
+  expect(total).toBe(200)
+})
+
+test('parseOverlay keeps the facet and aliases of tags beyond the path cap', () => {
+  // Act
+  const overlay = VocabularyFixture.crowded()
+
+  // Assert
+  expect(Object.keys(overlay.tags)).toHaveLength(50)
+  expect(overlay.tags.t49?.facet).toBe('artifact')
+  expect(overlay.tags.t49?.aliases).toEqual(['alias 49'])
+  expect(overlay.tags.t49?.paths).toEqual([])
+})
+
+test('parseOverlay gives the earlier tags their full eight paths', () => {
+  // Act
+  const overlay = VocabularyFixture.crowded()
+
+  // Assert
+  expect(overlay.tags.t0?.paths).toHaveLength(8)
 })

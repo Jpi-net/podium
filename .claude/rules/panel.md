@@ -14,6 +14,7 @@ paths:
 - `plugin/hooks/register.tsx`: entry point; commands, event hooks (`tool.call`, `prompt.submit`, `agent.spawn`…), the `/podium-stage` panel. Internal classes `Runtime` (state, `Runtime.io` wrapping `$`, `Runtime.graphCache`), `Flow`, `View`, `Recap`.
 - `plugin/hooks/project.ts`: the `Manifest` type and reading of `.claude/podium.json` and the project's `.claude/`; `plugin/hooks/rules.ts`: rule checks.
 - Scene: `plugin/hooks/scene.ts` composes `office.ts`, `colleagues.ts`, `robots.ts`, `weather.ts`, `night.ts`, `festive.ts`, `hats.ts`, `accessories.ts`, `effects.ts`, `avatar.ts` on a `Canvas` (`canvas.ts`), with `Raster`/`Sprite`/`Motion` (`sprite.ts`), `font.ts`, `theme.ts`.
+- `plugin/hooks/signature/`: the opt-in Signature layer (one class per file, pure except `store.ts` and `signature.ts`, which take ports); `register.tsx` only calls the `Signature` facade.
 - `plugin/types/index.d.ts`: exported flow types and `declare module 'claude-code' { interface PluginState { … } }`. Every `$.state` key is declared there; `claude plugin validate plugin` checks it.
 - Dependency direction: `register.tsx` imports the scene and project modules; scene modules never import `register.tsx` and never touch `$`.
 
@@ -22,7 +23,10 @@ paths:
 - Constants `private static readonly UPPER_CASE` (palettes as `Rgb` tuples, `readonly Rgb[]`); public sizes `static readonly` (`Colleagues.WIDTH`); booleans prefixed `is` (`isMe`, `isError`).
 - Two-space indent, LF, no semicolons, single quotes, relative imports without extension, inline `type` imports: `import { Canvas, type Rgb } from './canvas'`.
 - Errors: hooks fail open. A hook that throws is skipped by the engine; nothing may throw out of a gating hook before `next(e)`. Fire-and-forget promises end with `.catch(() => undefined)` (`Runtime.queue`, `Runtime.io.notify` in `register.tsx`); fallbacks use `try/catch` returning a default.
-- `$.process.run` only with argv arrays and read-only git commands; `$.fs` reads only.
+- `$.process.run` only with argv arrays and read-only git commands (`git log`, `git show`, `git config --get`, `git rev-parse`, `git ls-files` for Signature); every variable argument validated.
+- `$.fs` reads; writes only through `SignatureStore` (`plugin/hooks/signature/store.ts`), under the Signature data root resolved by `SignaturePaths` and checked with `SignaturePaths.isInside`. `$.fs` has no delete: Signature empties files instead.
+- `$.model.complete` only from the Signature learner, inside the daily token budget of the user's settings.
+- Signature (`plugin/hooks/signature/`): nothing is captured, learned or applied unless consent is `enabled`, the session is interactive and not excluded; every text that reaches the journal or a model call goes through `Redactor`; model output passes `Cases.isUnsafe` before it is stored. Design: `docs/signature/`.
 - Pixel art: `Raster`/`Sprite` or `canvas.block` aligned to quad pixels (0.5 unit wide, 1 unit tall; 1 unit = 1 terminal column; canvas height = rows * 2). Shade with `Canvas.scale(color, light)`.
 - Render path: no allocation-heavy loops per frame; invalidate `Runtime.graphCache` when its inputs change.
 - User-facing text is English.

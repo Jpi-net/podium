@@ -4,6 +4,14 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Added
+
+- Signature, an opt-in profile of how you work (off by default): an opt-in screen and a Signature tab (key 6) in /podium-stage, with a choice per capability. It introduces itself at most once a day until you choose; Not now waits 7 days.
+- Once enabled, Podium records your masked prompts, answers to Claude's questions, accepted or refused plans, interruptions and the subagents used from your sessions into ~/.claude/podium/journal/ on your machine. File contents, tool outputs and secrets are never recorded, and sessions run without a conversation (`claude -p`) are skipped.
+- Keep a folder out with a .podium-private file (searched up to the git root) or `/podium-stage signature exclude <folder>` (absolute or `~` path).
+- `/podium-stage signature [on|off|pause|resume|exclude|include|erase]` to control it; `erase` empties everything stored.
+- PRIVACY.md and the README describe what Signature records, where, and how to stop it.
+
 ## [0.2.3] - 2026-11-02
 
 ### Changed

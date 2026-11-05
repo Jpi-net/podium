@@ -1,6 +1,6 @@
 # Privacy policy
 
-Last updated: 2 November 2026
+Last updated: 5 November 2026
 
 Podium is an open-source Claude Code plugin published by Julien Pierlot. This policy describes what the plugin does with data.
 
@@ -17,6 +17,18 @@ Everything below stays on your computer.
 - **The hooks it generates** run locally in your project. The only command that may reach a network is the work-item command you configure yourself (for example `gh issue view {id}`, which uses your own GitHub CLI login); its output is cached in your repository's `.git/podium-work-items` folder.
 
 The exact list of commands, files and settings is in the plugin's [README, "Permissions and data"](https://github.com/Jpi-net/podium/blob/main/plugin/README.md#permissions-and-data).
+
+## Signature (opt-in)
+
+Signature is off by default. Until you enable it on the opt-in screen (`/podium-stage signature`), nothing below happens.
+
+- **What is recorded** from your interactive Claude Code sessions: your prompts (masked and shortened), your answers to Claude's questions, plans you accept or refuse, interruptions, the subagent types and models used, and the project of the session (its folder name, a short hash of its git remote and up to three stack tags).
+- **Masked before writing**: private keys, tokens and API keys, passwords and secret values, credentials in URLs, email addresses, your home folder path and long opaque blobs.
+- **Never recorded**: file contents, tool outputs, diffs, shell command lines, images and attachments, subagent prompts, Claude's own answers (only the questions it asks you and the plans you accept or refuse are kept, masked). Sessions run without a conversation (`claude -p`, SDK) are never recorded.
+- **Stored** only on your machine, under `~/.claude/podium/` (or `$CLAUDE_CONFIG_DIR/podium/`). Nothing is written into your projects. The files get your system's default permissions; on a computer shared with other accounts, restrict the folder (for example `chmod 700 ~/.claude/podium`).
+- **Excluded** folders: add a `.podium-private` file to a folder (looked for up to the git root), or run `/podium-stage signature exclude <folder>`. Nothing is recorded there.
+- **Paused or erased**: `/podium-stage signature pause` stops recording; `/podium-stage signature erase` empties everything stored. The plugin cannot delete files, so erase leaves empty files; delete the folder by hand to remove them.
+- **Sent**: Podium sends nothing to its author or to any Podium server. If you enable learning in a later release, the opt-in screen says that selected, masked excerpts are sent to Claude through your own Claude Code session, billed to your own plan and capped, exactly like any other request in that session.
 
 ## Claude and Anthropic
 

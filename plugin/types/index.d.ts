@@ -123,7 +123,40 @@ export type FlowContext = {
   staleCommitAt: number
 }
 
-export type FlowTab = 'flux' | 'livraison' | 'historique' | 'contexte' | 'commandes'
+export type FlowTab = 'flux' | 'livraison' | 'historique' | 'contexte' | 'commandes' | 'signature'
+
+export type SignatureConsent = 'undecided' | 'enabled' | 'paused' | 'declined' | 'never'
+
+export type SignatureDraft = {
+  sessions: boolean
+  history: boolean
+  pastSessions: boolean
+  background: boolean
+  apply: boolean
+}
+
+export type SignatureSizes = {
+  indexBytes: number
+  casesBytes: number
+  journalBytes: number
+  emptyFiles: number
+}
+
+export type SignatureViewState = {
+  consent: SignatureConsent
+  draft: SignatureDraft
+  isExcluded: boolean
+  exclusionReason: string
+  root: string
+  signals: number
+  buffered: number
+  lost: number
+  dropped: string[]
+  storage: SignatureSizes
+  confirmErase: boolean
+  confirmUntil: number
+  lastError: string
+}
 
 export type HistoryMode = 'journal' | 'couloirs'
 
@@ -150,6 +183,7 @@ declare module 'claude-code' {
       context: Shaped<FlowContext>
       view: Shaped<FlowView>
       accessory: Shaped<string>
+      signature: Shaped<SignatureViewState>
     }
   }
 }
