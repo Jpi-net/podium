@@ -18,7 +18,7 @@ const PANE = {
 
 const VIEWPORT = { columns: 120, rows: 50 }
 
-type Sink = { notifications: string[]; copies: string[]; files?: Record<string, string>; stored?: Record<string, unknown>; fetchAgeMs?: number; isBare?: boolean; opens?: number; submitted?: string[] }
+type Sink = { notifications: string[]; copies: string[]; files?: Record<string, string>; stored?: Record<string, unknown>; fetchAgeMs?: number; isBare?: boolean; opens?: number; submitted?: string[]; env?: Record<string, string>; isRooted?: boolean; isDropping?: boolean }
 
 class Engine {
   static spawn(subagentType: string, description: string): AgentSpawnInput {
@@ -64,15 +64,22 @@ class Engine {
     on('fs.list', () => ({ value: [] }))
     on('fs.read', (_, e) => ({ value: sink.files?.[e.path] ?? Engine.file(sink, String(e.path)) ?? (String(e.path).endsWith('.claude/podium.json') && sink.isBare !== true ? JSON.stringify(Fixtures.SAMPLE_PROJECT) : '') }))
     on('store.get', () => ({ value: undefined }))
-    on('env.get', () => ({ value: undefined }))
+    on('env.get', (_, e) => {
+      const key = String((e as Record<string, unknown>).name ?? (e as Record<string, unknown>).key)
+      return { value: sink.env?.[key] }
+    })
     on('store.set', (_, e) => {
       if (sink.stored) sink.stored[e.key] = e.value
       return { value: undefined }
     })
-    on('fs.stat', () => ({ value: { kind: 'file', size: 0, mtimeMs: Date.now() - (sink.fetchAgeMs ?? 3 * 86_400_000 + 60_000), isLink: false } }))
+    on('fs.stat', (_, e) => {
+      const path = String(e.path)
+      const kind = sink.isRooted === true && !/\.[a-z]+$/.test(path) ? 'dir' : 'file'
+      return { value: { kind, size: 0, mtimeMs: Date.now() - (sink.fetchAgeMs ?? 3 * 86_400_000 + 60_000), isLink: false, realPath: path } as never }
+    })
     on('prompt.submit', (_, e) => {
       sink.submitted?.push(e.text)
-      return { text: e.text }
+      return sink.isDropping === true ? ({ drop: 'blocked' } as never) : { text: e.text }
     })
     on('process.run', (_, e) => {
       const argv = e.argv.join(' ')
@@ -1048,9 +1055,9 @@ test('bug: the footer offers r only in the Context tab', async ($, on) => {
   const ui = await $.ui.mount({ ...PANE, props: { ...PANE.props, isFocused: true }, surface: 'terminal', viewport: VIEWPORT })
 
   // Act
-  const flux = (await ui.find({ type: 'Text', text: /^1-5 tabs/ }))?.text ?? ''
+  const flux = (await ui.find({ type: 'Text', text: /^1-6 tabs/ }))?.text ?? ''
   await ui.press({ key: 'tab-contexte' })
-  const contexte = (await ui.find({ type: 'Text', text: /^1-5 tabs/ }))?.text ?? ''
+  const contexte = (await ui.find({ type: 'Text', text: /^1-6 tabs/ }))?.text ?? ''
 
   // Assert
   expect(flux).not.toBe('')
@@ -1271,7 +1278,7 @@ test('the footer only appears when the panel is active and fits in 64 columns', 
   Engine.stub(on)
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
   const idle = await $.ui.mount({ ...PANE, props: { ...PANE.props, bodyColumns: 64 }, surface: 'terminal', viewport: VIEWPORT })
-  const hidden = await idle.find({ type: 'Text', text: /^1-5 tabs/ })
+  const hidden = await idle.find({ type: 'Text', text: /^1-6 tabs/ })
   await idle.unmount()
   const ui = await $.ui.mount({ ...PANE, props: { ...PANE.props, bodyColumns: 64, isFocused: true }, surface: 'terminal', viewport: VIEWPORT })
   const footers: string[] = []
@@ -1279,11 +1286,11 @@ test('the footer only appears when the panel is active and fits in 64 columns', 
   // Act
   for (const tab of ['flux', 'livraison', 'historique', 'contexte']) {
     await ui.press({ key: `tab-${tab}` })
-    footers.push((await ui.find({ type: 'Text', text: /^1-5 tabs/ }))?.text ?? '')
+    footers.push((await ui.find({ type: 'Text', text: /^1-6 tabs/ }))?.text ?? '')
   }
   await ui.press({ key: 'tab-historique' })
   await ui.press({ key: 'mode' })
-  footers.push((await ui.find({ type: 'Text', text: /^1-5 tabs/ }))?.text ?? '')
+  footers.push((await ui.find({ type: 'Text', text: /^1-6 tabs/ }))?.text ?? '')
 
   // Assert
   expect(hidden).toBeUndefined()
@@ -1722,4 +1729,360 @@ test('a failing verification whose output quotes hook words still turns the step
   // Assert
   expect((await ui.find({ type: 'Text', text: /^. Build\s/ }))?.text).toMatch(/✗/)
   await ui.unmount()
+})
+
+class SignatureEngine {
+  static readonly ROOT = '/Users/j/.claude/podium'
+
+  static async run(command: (input: never) => Promise<unknown>, args: string, kind = 'composer'): Promise<string> {
+    return JSON.stringify(await command({ command: 'podium-stage', args, origin: { kind } } as never))
+  }
+
+  static async ready($: { command: { run: (input: never) => Promise<unknown> } }): Promise<void> {
+    await SignatureEngine.run((input) => $.command.run(input), 'signature resume')
+  }
+
+  static sink(consent: string): Sink {
+    const files: Record<string, string> = {}
+    if (consent !== '') files[`${SignatureEngine.ROOT}/settings.json`] = JSON.stringify({ version: 1, consent })
+    return { notifications: [], copies: [], files, env: { HOME: '/Users/j' }, isRooted: true }
+  }
+
+  static stub(on: On, sink: Sink, withTools = true): { writes: string[], attempts: string[], isFailing: boolean, created: number, ended: number, session: string } {
+    const record = { writes: [] as string[], attempts: [] as string[], isFailing: false, created: 0, ended: 0, session: 'old' }
+    Engine.stub(on, withTools, undefined, undefined, sink)
+    on('clock.every', () => {
+      record.created += 1
+      return { value: { id: `timer-${record.created}` } } as never
+    })
+    on('session.id', () => ({ value: record.session }) as never)
+    on('session.end', () => {
+      record.ended += 1
+      return { sessionId: record.session } as never
+    })
+    on('fs.write', (_, e) => {
+      record.attempts.push(String(e.path))
+      if (record.isFailing) throw new Error('disk full')
+      record.writes.push(String(e.path))
+      if (sink.files) sink.files[String(e.path)] = String((e as Record<string, unknown>).text ?? (e as Record<string, unknown>).content ?? '')
+      return { value: undefined }
+    })
+    on('fs.exists', () => ({ value: false }))
+    return record
+  }
+
+  static journal(sink: Sink, session = ''): { kind: string, session: string, data: Record<string, unknown> }[] {
+    return Object.entries(sink.files ?? {})
+      .filter(([path]) => path.includes('/journal/') && path.endsWith(`${session}.jsonl`))
+      .flatMap(([, text]) => text.split('\n').filter((line) => line !== '').map((line) => JSON.parse(line)))
+  }
+
+  static async flush($: { session: { end: (input: never) => Promise<unknown> } }): Promise<void> {
+    await $.session.end({ reason: 'exit' } as never)
+  }
+}
+
+test('the sixth tab renders the Signature view', async ($, on) => {
+  // Arrange
+  Engine.stub(on)
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal', viewport: VIEWPORT })
+
+  // Act
+  await ui.press({ key: 'tab-signature' })
+
+  // Assert
+  expect((await ui.find({ type: 'Text', text: /Teach Claude how you work/ }))?.text).toContain('Teach Claude how you work')
+  expect((await ui.find({ key: 'sig-choice-sessions' }))?.type).toBe('Button')
+  await ui.unmount()
+})
+
+test('the signature alias opens the Signature tab', async ($, on) => {
+  // Arrange
+  Engine.stub(on)
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+
+  // Act
+  await $.command.run({ command: 'podium-stage', args: 'signature' } as never)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal', viewport: VIEWPORT })
+
+  // Assert
+  expect((await ui.find({ type: 'Text', text: /Teach Claude how you work/ }))?.text).toContain('Teach Claude')
+  await ui.unmount()
+})
+
+test('the profile alias opens the Signature tab', async ($, on) => {
+  // Arrange
+  Engine.stub(on)
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+
+  // Act
+  await $.command.run({ command: 'podium-stage', args: 'profile' } as never)
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal', viewport: VIEWPORT })
+
+  // Assert
+  expect((await ui.find({ type: 'Text', text: /Teach Claude how you work/ }))?.text).toContain('Teach Claude')
+  await ui.unmount()
+})
+
+test('the signature on command answers with a one-line text', async ($, on) => {
+  // Arrange
+  const sink = SignatureEngine.sink('')
+  SignatureEngine.stub(on, sink)
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+
+  // Act
+  const text = await SignatureEngine.run((input) => $.command.run(input), 'signature on')
+
+  // Assert
+  expect(text).toBe('{"text":"Signature is on: it records your decisions from now on."}')
+})
+
+test('the signature on command enables Signature and writes its settings under the root', async ($, on) => {
+  // Arrange
+  const sink = SignatureEngine.sink('')
+  const record = SignatureEngine.stub(on, sink)
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+
+  // Act
+  await SignatureEngine.run((input) => $.command.run(input), 'signature on')
+
+  // Assert
+  expect(record.writes).toContain(`${SignatureEngine.ROOT}/settings.json`)
+  expect(record.writes.every((path) => path.startsWith(SignatureEngine.ROOT + '/'))).toBe(true)
+})
+
+test('an AskUserQuestion result passes through unchanged with Signature enabled', async ($, on) => {
+  // Arrange
+  const sink = SignatureEngine.sink('enabled')
+  const result = { questions: [{ question: 'Which database?', options: [{ label: 'Postgres' }, { label: 'SQLite' }] }], answers: { 'Which database?': 'Postgres' } }
+  SignatureEngine.stub(on, sink, false)
+  on('tool.call', () => ({ result }))
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+
+  // Act
+  const ran = await $.tool.call({ tool: 'AskUserQuestion', questions: result.questions } as never)
+
+  // Assert
+  expect(ran).toEqual({ result })
+})
+
+test('an ExitPlanMode result passes through unchanged with Signature enabled', async ($, on) => {
+  // Arrange
+  const sink = SignatureEngine.sink('enabled')
+  const result = { plan: '1. Add the table\n2. Migrate', planWasEdited: false }
+  SignatureEngine.stub(on, sink, false)
+  on('tool.call', () => ({ result }))
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+
+  // Act
+  const ran = await $.tool.call({ tool: 'ExitPlanMode', plan: result.plan } as never)
+
+  // Assert
+  expect(ran).toEqual({ result })
+})
+
+test('a refused ExitPlanMode passes through unchanged with Signature enabled', async ($, on) => {
+  // Arrange
+  const sink = SignatureEngine.sink('enabled')
+  SignatureEngine.stub(on, sink, false)
+  on('tool.call', () => ({ deny: 'Use a smaller plan' }) as never)
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+
+  // Act
+  const ran = await $.tool.call({ tool: 'ExitPlanMode', plan: '1. Rewrite everything' } as never)
+
+  // Assert
+  expect(ran).toEqual({ deny: 'Use a smaller plan' })
+})
+
+test('session end calls next and does not throw when Signature fails', async ($, on) => {
+  // Arrange
+  const sink = SignatureEngine.sink('enabled')
+  const record = SignatureEngine.stub(on, sink)
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await SignatureEngine.ready($)
+  await $.prompt.submit({ text: 'please fix the build', origin: { kind: 'composer' } } as never)
+  record.isFailing = true
+
+  // Act
+  await $.session.end({ reason: 'exit' } as never)
+
+  // Assert
+  expect(record.ended).toBe(1)
+  expect(record.attempts.some((path) => path.includes('/journal/'))).toBe(true)
+})
+
+test('session end calls next when Signature has nothing to write', async ($, on) => {
+  // Arrange
+  const record = SignatureEngine.stub(on, SignatureEngine.sink(''))
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+
+  // Act
+  await $.session.end({ reason: 'exit' } as never)
+
+  // Assert
+  expect(record.ended).toBe(1)
+})
+
+test('a signature command from a model origin is refused', async ($, on) => {
+  // Arrange
+  SignatureEngine.stub(on, SignatureEngine.sink(''))
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+
+  // Act
+  const text = await SignatureEngine.run((input) => $.command.run(input), 'signature on', 'model')
+
+  // Assert
+  expect(text).toBe('{"text":"Run this command yourself."}')
+})
+
+test('the bare signature command still opens the tab from a model origin', async ($, on) => {
+  // Arrange
+  SignatureEngine.stub(on, SignatureEngine.sink(''))
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+
+  // Act
+  const text = await SignatureEngine.run((input) => $.command.run(input), 'signature', 'model')
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal', viewport: VIEWPORT })
+
+  // Assert
+  expect(text).not.toContain('Run this command yourself.')
+  expect((await ui.find({ type: 'Text', text: /Teach Claude how you work/ }))?.text).toContain('Teach Claude')
+  await ui.unmount()
+})
+
+test('a user prompt is recorded in the journal', async ($, on) => {
+  // Arrange
+  const sink = SignatureEngine.sink('enabled')
+  SignatureEngine.stub(on, sink)
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await SignatureEngine.ready($)
+
+  // Act
+  await $.prompt.submit({ text: 'please fix the build', origin: { kind: 'composer' } } as never)
+  await SignatureEngine.flush($)
+
+  // Assert
+  expect(SignatureEngine.journal(sink).filter((signal) => signal.kind === 'prompt')).toHaveLength(1)
+})
+
+test('a task notification is not recorded', async ($, on) => {
+  // Arrange
+  const sink = SignatureEngine.sink('enabled')
+  SignatureEngine.stub(on, sink)
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await SignatureEngine.ready($)
+
+  // Act
+  await $.prompt.submit({ text: 'background task finished', origin: { kind: 'task-notification' } } as never)
+  await SignatureEngine.flush($)
+
+  // Assert
+  expect(SignatureEngine.journal(sink)).toEqual([])
+})
+
+test('a prompt dropped by a hook below is not recorded', async ($, on) => {
+  // Arrange
+  const sink = { ...SignatureEngine.sink('enabled'), isDropping: true }
+  SignatureEngine.stub(on, sink)
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await SignatureEngine.ready($)
+
+  // Act
+  await $.prompt.submit({ text: 'please fix the build', origin: { kind: 'composer' } } as never)
+  await SignatureEngine.flush($)
+
+  // Assert
+  expect(SignatureEngine.journal(sink)).toEqual([])
+})
+
+test('an answered question is recorded', async ($, on) => {
+  // Arrange
+  const sink = SignatureEngine.sink('enabled')
+  const result = { questions: [{ question: 'Which database?', options: [{ label: 'Postgres' }, { label: 'SQLite' }] }], answers: { 'Which database?': 'Postgres' } }
+  SignatureEngine.stub(on, sink, false)
+  on('tool.call', () => ({ result }))
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await SignatureEngine.ready($)
+
+  // Act
+  await $.tool.call({ tool: 'AskUserQuestion', questions: result.questions } as never)
+  await SignatureEngine.flush($)
+
+  // Assert
+  expect(SignatureEngine.journal(sink).filter((signal) => signal.kind === 'question')).toHaveLength(1)
+})
+
+test('a refused plan takes its feedback from the error text', async ($, on) => {
+  // Arrange
+  const sink = SignatureEngine.sink('enabled')
+  SignatureEngine.stub(on, sink, false)
+  on('tool.call', () => ({ result: {}, isError: true, text: 'Use smaller steps' }) as never)
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await SignatureEngine.ready($)
+
+  // Act
+  await $.tool.call({ tool: 'ExitPlanMode', plan: '1. Rewrite everything' } as never)
+  await SignatureEngine.flush($)
+
+  // Assert
+  const plans = SignatureEngine.journal(sink).filter((signal) => signal.kind === 'plan')
+  expect(plans).toHaveLength(1)
+  expect(plans[0]?.data.outcome).toBe('refused')
+  expect(plans[0]?.data.feedback).toBe('Use smaller steps')
+})
+
+test('a deny-only plan refusal is recorded with an empty feedback', async ($, on) => {
+  // Arrange
+  const sink = SignatureEngine.sink('enabled')
+  SignatureEngine.stub(on, sink, false)
+  on('tool.call', () => ({ deny: 'blocked by a rule' }) as never)
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await SignatureEngine.ready($)
+
+  // Act
+  await $.tool.call({ tool: 'ExitPlanMode', plan: '1. Rewrite everything' } as never)
+  await SignatureEngine.flush($)
+
+  // Assert
+  const plans = SignatureEngine.journal(sink).filter((signal) => signal.kind === 'plan')
+  expect(plans[0]?.data.outcome).toBe('refused')
+  expect(plans[0]?.data.feedback).toBe('')
+})
+
+test('an aborted main turn marks the next prompt as after an abort', async ($, on) => {
+  // Arrange
+  const sink = SignatureEngine.sink('enabled')
+  SignatureEngine.stub(on, sink)
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await SignatureEngine.ready($)
+  await $.turn.complete({ answer: '', text: '', durationMs: 10, isAborted: true, turnId: 't1', reason: 'aborted' } as never)
+
+  // Act
+  await $.prompt.submit({ text: 'no, do it differently', origin: { kind: 'composer' } } as never)
+  await SignatureEngine.flush($)
+
+  // Assert
+  const prompts = SignatureEngine.journal(sink).filter((signal) => signal.kind === 'prompt')
+  expect(prompts[0]?.data.afterAbort).toBe(true)
+})
+
+test('a session end with the clear reason moves recording to the new session id', async ($, on) => {
+  // Arrange
+  const sink = SignatureEngine.sink('enabled')
+  const record = SignatureEngine.stub(on, sink)
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await SignatureEngine.ready($)
+  await $.prompt.submit({ text: 'first request in the old session', origin: { kind: 'composer' } } as never)
+  record.session = 'new'
+
+  // Act
+  await $.session.end({ reason: 'clear' } as never)
+  await $.prompt.submit({ text: 'second request in the new session', origin: { kind: 'composer' } } as never)
+  await SignatureEngine.flush($)
+
+  // Assert
+  expect(SignatureEngine.journal(sink, 'old')).toHaveLength(1)
+  expect(SignatureEngine.journal(sink, 'new')).toHaveLength(1)
 })

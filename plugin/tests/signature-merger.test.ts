@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 import { Cases, type Case } from '../hooks/signature/cases'
-import { CaseMerger } from '../hooks/signature/merger'
+import { CaseMerger, type MergeContext } from '../hooks/signature/merger'
 import { SignatureFixtures } from './fixtures/signature'
 
 class MergerFixture {
@@ -24,7 +24,8 @@ class MergerFixture {
     return SignatureFixtures.extracted({ tags: MergerFixture.TAGS, choice, evidence })
   }
 
-  static merge(existing: Case[], incoming: ReturnType<typeof SignatureFixtures.extracted>[], context = SignatureFixtures.context()) {
+  static merge(existing: Case[], incoming: ReturnType<typeof SignatureFixtures.extracted>[], partial: Partial<MergeContext> = {}) {
+    const context = SignatureFixtures.context({ allowedEvidence: incoming.flatMap((item) => item.evidence), ...partial })
     return CaseMerger.merge(existing, incoming, context, SignatureFixtures.vocabulary())
   }
 
@@ -237,10 +238,10 @@ test('the existing case becomes stale when counter evidence passes its evidence'
 
 test('a new case takes the next free id and advances the counter', () => {
   // Arrange
-  const incoming = [MergerFixture.incoming('First distinct choice'), SignatureFixtures.extracted({ tags: ['caching', 'hook'], choice: 'Other unrelated decision' })]
+  const incoming = [MergerFixture.incoming('First distinct choice'), SignatureFixtures.extracted({ tags: ['caching', 'hook'], choice: 'Other unrelated decision', evidence: MergerFixture.ids('c') })]
 
   // Act
-  const result = MergerFixture.merge([], incoming, SignatureFixtures.context({ nextId: 40 }))
+  const result = MergerFixture.merge([], incoming, { nextId: 40 })
 
   // Assert
   expect(result.added).toEqual([40, 41])
@@ -280,7 +281,7 @@ test('a new case from session evidence takes the context project', () => {
 
 test('a new case from a project batch with one source is project scoped', () => {
   // Act
-  const result = MergerFixture.merge([], [MergerFixture.incoming()], SignatureFixtures.context({ isProjectBatch: true }))
+  const result = MergerFixture.merge([], [MergerFixture.incoming()], { isProjectBatch: true })
 
   // Assert
   expect(MergerFixture.find(result.cases, 100).scope).toBe('project')
@@ -291,7 +292,7 @@ test('a new case from a project batch with two repositories is not project scope
   const incoming = MergerFixture.incoming(undefined, ['commit:podium:aaaaaaa', 'commit:other-repo:ccccccc'])
 
   // Act
-  const result = MergerFixture.merge([], [incoming], SignatureFixtures.context({ isProjectBatch: true }))
+  const result = MergerFixture.merge([], [incoming], { isProjectBatch: true })
 
   // Assert
   expect(MergerFixture.find(result.cases, 100).scope).toBe('global')
@@ -527,7 +528,7 @@ test('a second opposite extraction in a later merge makes an evidence-one case s
   const first = MergerFixture.merge(existing, [MergerFixture.incoming(MergerFixture.OPPOSITE, ['commit:podium:ccccccc'])])
 
   // Act
-  const second = MergerFixture.merge(first.cases, [MergerFixture.incoming(MergerFixture.OPPOSITE, ['commit:podium:ddddddd'])], SignatureFixtures.context({ nextId: first.nextId }))
+  const second = MergerFixture.merge(first.cases, [MergerFixture.incoming(MergerFixture.OPPOSITE, ['commit:podium:ddddddd'])], { nextId: first.nextId })
 
   // Assert
   expect(MergerFixture.find(first.cases, 1).status).toBe('observed')
@@ -789,7 +790,7 @@ test('a stale user-confirmed case is restored to confirmed', () => {
 
 test('allowed evidence filters the ids it does not know', () => {
   // Arrange
-  const context = SignatureFixtures.context({ allowedEvidence: MergerFixture.ids('b') })
+  const context = { allowedEvidence: MergerFixture.ids('b') }
 
   // Act
   const result = MergerFixture.merge([], [MergerFixture.incoming(undefined, MergerFixture.ids('bc'))], context)
@@ -800,7 +801,7 @@ test('allowed evidence filters the ids it does not know', () => {
 
 test('allowed evidence drops a case left with no evidence', () => {
   // Arrange
-  const context = SignatureFixtures.context({ allowedEvidence: MergerFixture.ids('b') })
+  const context = { allowedEvidence: MergerFixture.ids('b') }
 
   // Act
   const result = MergerFixture.merge([], [MergerFixture.incoming(undefined, MergerFixture.ids('c'))], context)
@@ -810,13 +811,69 @@ test('allowed evidence drops a case left with no evidence', () => {
   expect(result.dropped).toBe(1)
 })
 
-test('an empty allowed evidence list means no restriction', () => {
+test('an empty allowed evidence list drops every incoming case', () => {
   // Arrange
-  const context = SignatureFixtures.context({ allowedEvidence: [] })
+  const incoming = [MergerFixture.incoming(undefined, MergerFixture.ids('c')), MergerFixture.incoming('Another distinct choice', MergerFixture.ids('d'))]
 
   // Act
-  const result = MergerFixture.merge([], [MergerFixture.incoming(undefined, MergerFixture.ids('c'))], context)
+  const result = MergerFixture.merge([], incoming, { allowedEvidence: [] })
 
   // Assert
-  expect(result.cases[0]?.evidence).toEqual(MergerFixture.ids('c'))
+  expect(result.added).toEqual([])
+  expect(result.cases).toEqual([])
+  expect(result.dropped).toBe(2)
+})
+
+test('an evidence id earns credit once per merge and the second item loses it', () => {
+  // Arrange
+  const first = MergerFixture.incoming(undefined, MergerFixture.ids('bc'))
+  const second = SignatureFixtures.extracted({ tags: ['caching', 'hook'], choice: 'Cache the render output', evidence: MergerFixture.ids('cd') })
+
+  // Act
+  const result = MergerFixture.merge([], [first, second])
+
+  // Assert
+  expect(result.cases).toHaveLength(2)
+  expect(MergerFixture.find(result.cases, 101).evidence).toEqual(MergerFixture.ids('d'))
+  expect(MergerFixture.find(result.cases, 101).evidenceCount).toBe(1)
+})
+
+test('an item left with no credited evidence is dropped', () => {
+  // Arrange
+  const first = MergerFixture.incoming(undefined, MergerFixture.ids('b'))
+  const second = SignatureFixtures.extracted({ tags: ['caching', 'hook'], choice: 'Cache the render output', evidence: MergerFixture.ids('b') })
+
+  // Act
+  const result = MergerFixture.merge([], [first, second])
+
+  // Assert
+  expect(result.cases).toHaveLength(1)
+  expect(result.dropped).toBe(1)
+})
+
+test('the ids of a dropped item are not credited', () => {
+  // Arrange
+  const existing = [MergerFixture.existing({ status: 'rejected' })]
+  const dropped = MergerFixture.incoming(undefined, MergerFixture.ids('c'))
+  const later = SignatureFixtures.extracted({ tags: ['caching', 'hook'], choice: 'Cache the render output', evidence: MergerFixture.ids('c') })
+
+  // Act
+  const result = MergerFixture.merge(existing, [dropped, later])
+
+  // Assert
+  expect(result.dropped).toBe(1)
+  expect(result.added).toEqual([100])
+  expect(MergerFixture.find(result.cases, 100).evidence).toEqual(MergerFixture.ids('c'))
+})
+
+test('a non-array allowed evidence list drops every incoming case', () => {
+  // Arrange
+  const context = { ...SignatureFixtures.context(), allowedEvidence: undefined as unknown as string[] }
+
+  // Act
+  const result = CaseMerger.merge([], [MergerFixture.incoming()], context, SignatureFixtures.vocabulary())
+
+  // Assert
+  expect(result.added).toEqual([])
+  expect(result.dropped).toBe(1)
 })

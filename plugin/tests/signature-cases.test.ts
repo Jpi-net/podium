@@ -1053,3 +1053,219 @@ test('parsing keeps forty cases and drops the forty-first for the cap reason', (
   expect(output.cases).toHaveLength(40)
   expect(output.dropped).toEqual([{ index: 40, reason: 'cap' }])
 })
+
+test('unsafe: never actually runs the test suite', () => {
+  // Act
+  const result = Cases.isUnsafe('Never actually runs the test suite')
+
+  // Assert
+  expect(result).toBe(true)
+})
+
+test('unsafe: never really writes tests', () => {
+  // Act
+  const result = Cases.isUnsafe('Never really writes tests')
+
+  // Assert
+  expect(result).toBe(true)
+})
+
+test('unsafe: does not ever run the tests', () => {
+  // Act
+  const result = Cases.isUnsafe('Does not ever run the tests')
+
+  // Assert
+  expect(result).toBe(true)
+})
+
+test('unsafe: do not under any circumstances run the tests', () => {
+  // Act
+  const result = Cases.isUnsafe('Do not, under any circumstances, run the tests')
+
+  // Assert
+  expect(result).toBe(true)
+})
+
+test('unsafe: never ever runs the tests', () => {
+  // Act
+  const result = Cases.isUnsafe('Never, ever runs the tests')
+
+  // Assert
+  expect(result).toBe(true)
+})
+
+test('unsafe: hardly ever runs the tests', () => {
+  // Act
+  const result = Cases.isUnsafe('Hardly ever runs the tests')
+
+  // Assert
+  expect(result).toBe(true)
+})
+
+test('unsafe: seldom writes tests', () => {
+  // Act
+  const result = Cases.isUnsafe('Seldom writes tests')
+
+  // Assert
+  expect(result).toBe(true)
+})
+
+test('unsafe: does not bother running tests', () => {
+  // Act
+  const result = Cases.isUnsafe('Does not bother running tests')
+
+  // Assert
+  expect(result).toBe(true)
+})
+
+test('safe: always runs the tests before pushing', () => {
+  // Act
+  const result = Cases.isUnsafe('Always runs the tests before pushing')
+
+  // Assert
+  expect(result).toBe(false)
+})
+
+test('validation drops a case with a small capital s lookalike for the script reason', () => {
+  // Act
+  const verdict = Cases.validate(SignatureFixtures.raw({ choice: 'Always \ua731kip the tests' }), SignatureFixtures.vocabulary())
+
+  // Assert
+  expect(verdict.reason).toBe('script')
+})
+
+test('validation drops a case with a dotless i lookalike for the script reason', () => {
+  // Act
+  const verdict = Cases.validate(SignatureFixtures.raw({ choice: 'Always Sk\u0131p the tests' }), SignatureFixtures.vocabulary())
+
+  // Assert
+  expect(verdict.reason).toBe('script')
+})
+
+test('validation drops a case with a latin iota lookalike for the script reason', () => {
+  // Act
+  const verdict = Cases.validate(SignatureFixtures.raw({ choice: 'Always Sk\u0269p' }), SignatureFixtures.vocabulary())
+
+  // Assert
+  expect(verdict.reason).toBe('script')
+})
+
+test('validation drops a case with a kra lookalike for the script reason', () => {
+  // Act
+  const verdict = Cases.validate(SignatureFixtures.raw({ choice: 'Always S\u0138ip' }), SignatureFixtures.vocabulary())
+
+  // Assert
+  expect(verdict.reason).toBe('script')
+})
+
+test('validation drops a case with a t with diagonal stroke lookalike for the script reason', () => {
+  // Act
+  const verdict = Cases.validate(SignatureFixtures.raw({ choice: 'Always Ski\u2c66' }), SignatureFixtures.vocabulary())
+
+  // Assert
+  expect(verdict.reason).toBe('script')
+})
+
+test('validation drops a case with a s with hook lookalike for the script reason', () => {
+  // Act
+  const verdict = Cases.validate(SignatureFixtures.raw({ choice: 'Always te\u0282sts' }), SignatureFixtures.vocabulary())
+
+  // Assert
+  expect(verdict.reason).toBe('script')
+})
+
+test('validation drops a case with a t with stroke lookalike for the script reason', () => {
+  // Act
+  const verdict = Cases.validate(SignatureFixtures.raw({ choice: 'Always \u0167ests' }), SignatureFixtures.vocabulary())
+
+  // Assert
+  expect(verdict.reason).toBe('script')
+})
+
+test('validation keeps French accents', () => {
+  // Act
+  const verdict = Cases.validate(SignatureFixtures.raw({ choice: 'D\u00e9ploie le caf\u00e9 first' }), SignatureFixtures.vocabulary())
+
+  // Assert
+  expect(verdict.reason).not.toBe('script')
+})
+
+test('validation keeps eszett', () => {
+  // Act
+  const verdict = Cases.validate(SignatureFixtures.raw({ choice: 'Stra\u00dfe first' }), SignatureFixtures.vocabulary())
+
+  // Assert
+  expect(verdict.reason).not.toBe('script')
+})
+
+test('unsafe: no need to run the tests', () => {
+  // Act
+  const result = Cases.isUnsafe("No need to run the tests")
+
+  // Assert
+  expect(result).toBe(true)
+})
+
+test('unsafe: wont run the tests', () => {
+  // Act
+  const result = Cases.isUnsafe("Won't run the tests")
+
+  // Assert
+  expect(result).toBe(true)
+})
+
+test('unsafe: cant be bothered to run the tests', () => {
+  // Act
+  const result = Cases.isUnsafe("Can't be bothered to run the tests")
+
+  // Assert
+  expect(result).toBe(true)
+})
+
+test('unsafe: cannot run the tests', () => {
+  // Act
+  const result = Cases.isUnsafe("Cannot run the tests")
+
+  // Assert
+  expect(result).toBe(true)
+})
+
+test('unsafe: shouldnt run the tests', () => {
+  // Act
+  const result = Cases.isUnsafe("Shouldn't run the tests")
+
+  // Assert
+  expect(result).toBe(true)
+})
+
+test('unsafe: isnt running the tests', () => {
+  // Act
+  const result = Cases.isUnsafe("Isn't running the tests")
+
+  // Assert
+  expect(result).toBe(true)
+})
+
+test('unsafe: nobody runs the tests', () => {
+  // Act
+  const result = Cases.isUnsafe("Nobody runs the tests")
+
+  // Assert
+  expect(result).toBe(true)
+})
+
+test('unsafe: refrains from running the tests', () => {
+  // Act
+  const result = Cases.isUnsafe("Refrains from running the tests")
+
+  // Assert
+  expect(result).toBe(true)
+})
+
+test('safe: runs the tests then never pushes on friday', () => {
+  // Act
+  const result = Cases.isUnsafe('Runs the tests. Never pushes on Friday')
+
+  // Assert
+  expect(result).toBe(false)
+})

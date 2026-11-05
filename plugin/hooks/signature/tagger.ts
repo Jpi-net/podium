@@ -29,7 +29,7 @@ export class SituationTagger {
   static tag(vocabulary: VocabularyData, situation: Situation): string[] {
     try {
       const text = typeof situation.text === 'string' ? situation.text : ''
-      const given = Array.isArray(situation.paths) ? situation.paths : []
+      const given = Array.isArray(situation.paths) ? situation.paths.slice(0, SituationTagger.MAX_PATHS) : []
       const paths = [...new Set([...SituationTagger.paths(text), ...given])]
       const stack = Array.isArray(situation.stack) ? situation.stack : []
       return [...new Set([...Vocabulary.fromText(vocabulary, text), ...Vocabulary.fromPaths(vocabulary, paths), ...Vocabulary.normalize(vocabulary, stack)])]
