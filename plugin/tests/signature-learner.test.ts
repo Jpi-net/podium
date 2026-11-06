@@ -1,6 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 import { HistoryScanner, type HistoryCursor } from '../hooks/signature/history'
 import { Learner, type LearnPorts, type Progress, type RunInput, type RunReport } from '../hooks/signature/learner'
+import type { Case } from '../hooks/signature/cases'
 import { LearningPrompts } from '../hooks/signature/prompts'
 import { Profile } from '../hooks/signature/profile'
 import { SignatureSettings, type Settings } from '../hooks/signature/settings'
@@ -128,6 +129,57 @@ class LearnerFixture {
     sessions.forEach((session, index) => {
       LearnSeed.prompts(env.fs, 45, `2026-11/${session}.jsonl`, session, text + index)
     })
+  }
+
+  static commitsEnv(learning: Partial<Settings['learning']> = {}, count = 40): LearnEnv {
+    const env = LearnerFixture.env(LearnerFixture.settings(learning, { identities: ['a@b.co'] }), { repositories: [LearnerFixture.repo()] })
+    const shas = Array.from({ length: count }, (_, index) => (0x2000000 + index).toString(16).padEnd(40, '0'))
+    env.git.log([shas.map((sha, index) => LearnSeed.log(sha, 'Add feature ' + index)).join('')]).head(LearnSeed.HEAD)
+    for (const sha of shas) env.git.show(sha, LearnerFixture.diff())
+    return env
+  }
+
+  static crowdedHistoryEnv(cases: readonly Case[] = [SignatureFixtures.caseOf({ id: 1 })], inputTokens: number = 33000): LearnEnv {
+    const env = LearnerFixture.commitsEnv()
+    LearnSeed.cases(env.fs, cases)
+    env.fs.seed(files.profile, Profile.serialize({ ...Profile.empty(), updatedAt: '2026-11-05', synthesizedAt: 0, changedSince: 48 }))
+    env.model.during((request) => {
+      const isSynthesis = request.system[0]?.text === LearningPrompts.synthesis()
+      env.model.next(isSynthesis ? ScriptedModel.ok(LearnerFixture.traits(), 100, 50) : ScriptedModel.ok(LearnSeed.answer([]), inputTokens, 50))
+    })
+    return env
+  }
+
+  static extractionEnv(tokensPerDay: number, inputTokens: number): LearnEnv {
+    const env = LearnerFixture.commitsEnv({ tokensPerDay })
+    env.model.always(ScriptedModel.ok(LearnSeed.answer([]), inputTokens, 50))
+    return env
+  }
+
+  static extractions(env: LearnEnv): number {
+    return env.model.requests.filter((request) => request.system[0]?.text !== LearningPrompts.synthesis()).length
+  }
+
+  static longCases(count: number): Case[] {
+    return Array.from({ length: count }, (_, index) => SignatureFixtures.caseOf({ id: index + 1, situation: 'Situation ' + index + ' ' + 'x'.repeat(700) }))
+  }
+
+  static diff(): string {
+    return Array.from({ length: 400 }, (_, index) => `+const value${index} = compute(${index})`).join('\n') + '\n'
+  }
+
+  static traits(): string {
+    const trait = {
+      id: 'security.validate-boundaries',
+      lens: 'security',
+      facet: 'what',
+      statement: 'Validates every value that crosses a boundary',
+      scope: 'global',
+      stack: '',
+      cases: [1],
+      isBlindSpot: false
+    }
+    return JSON.stringify({ traits: [trait] })
   }
 
   static journalText(env: LearnEnv, key = LearnSeed.KEY): string | undefined {
@@ -1081,6 +1133,59 @@ test('synthesis runs when changes are old enough', async () => {
   // Assert
   expect(env.model.requests.length).toBe(1)
   expect(env.model.requests[0]?.system[0]?.text).toBe(LearningPrompts.synthesis())
+})
+
+test('history leaves room for the synthesis when it consumes the allowance', async () => {
+  // Arrange
+  const env = LearnerFixture.crowdedHistoryEnv()
+
+  // Act
+  await LearnerFixture.run(env)
+  const profile = (await SignatureStore.readProfile(env.fs, files)).value
+
+  // Assert
+  expect(env.model.requests.some((request) => request.system[0]?.text === LearningPrompts.synthesis())).toBe(true)
+  expect(profile.synthesizedAt).toBeGreaterThan(0)
+  expect(profile.traits.length).toBeGreaterThan(0)
+})
+
+test('a small allowance keeps history learning without a reserve', async () => {
+  // Arrange
+  const env = LearnerFixture.extractionEnv(16000, 100)
+
+  // Act
+  await LearnerFixture.run(env)
+
+  // Assert
+  expect(LearnerFixture.extractions(env)).toBeGreaterThanOrEqual(1)
+})
+
+test('an allowance just under the reserve threshold gives history all of it', async () => {
+  // Arrange
+  const under = LearnerFixture.extractionEnv(39999, 9000)
+  const at = LearnerFixture.extractionEnv(40000, 9000)
+
+  // Act
+  await LearnerFixture.run(under)
+  await LearnerFixture.run(at)
+
+  // Assert
+  expect(LearnerFixture.extractions(under)).toBeGreaterThan(LearnerFixture.extractions(at))
+  expect(LearnerFixture.extractions(at)).toBeGreaterThanOrEqual(1)
+})
+
+test('the reserve covers a synthesis at its full input size', async () => {
+  // Arrange
+  const cases = LearnerFixture.longCases(40)
+  const env = LearnerFixture.crowdedHistoryEnv(cases, 44500)
+  const input = LearningPrompts.synthesisInput(Profile.empty(), cases)
+
+  // Act
+  await LearnerFixture.run(env)
+
+  // Assert
+  expect(input.length).toBe(LearningPrompts.BATCH_CHARS)
+  expect(env.model.requests.some((request) => request.system[0]?.text === LearningPrompts.synthesis())).toBe(true)
 })
 
 test('a rebuild runs only the synthesis and makes no extraction call', async () => {

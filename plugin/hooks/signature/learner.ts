@@ -65,6 +65,7 @@ export class Learner {
   private static readonly CHARS_PER_TOKEN = 3.5
   private static readonly OUTPUT_TOKENS = 4000
   private static readonly SYNTHESIS_TOKENS = 8000
+  private static readonly SYNTHESIS_RESERVE = 20000
   private static readonly TIMEOUT_MS = 120000
   private static readonly MIN_PENDING = 20
   private static readonly MAX_RUNS = 30
@@ -455,7 +456,7 @@ export class Learner {
       const batches = LearningPrompts.batches(items)
       const origin: Origin = { name: repo.name, id: repo.id, stack: repo.source === 'auto' ? input.stack : '', isProject: true, isManual: repo.source === 'manual' }
       for (const batch of batches) {
-        if (!Learner.fits(run, run.allowance, system, batch.text)) {
+        if (!Learner.fits(run, Learner.historyLimit(run), system, batch.text)) {
           Learner.note(run, 'budget')
           isDone = false
           break
@@ -731,6 +732,10 @@ export class Learner {
     if (!isState) isOk = false
     if (!isOk) run.isStopped = true
     return isOk
+  }
+
+  private static historyLimit(run: Run): number {
+    return run.allowance >= Learner.SYNTHESIS_RESERVE * 2 ? run.allowance - Learner.SYNTHESIS_RESERVE : run.allowance
   }
 
   private static fits(run: Run, limit: number, system: string, prompt: string, output: number = Learner.OUTPUT_TOKENS): boolean {
