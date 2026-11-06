@@ -21,7 +21,7 @@ A run is never awaited by a hook. It reports progress to the Signature view stat
 1. Take the lock.
 2. Load settings, state, vocabulary, index (in memory already when the session is enabled).
 3. Session batches (step A), up to half the run's token allowance.
-4. History batches (step B), up to the rest.
+4. History batches (step B), up to the rest minus the synthesis reserve.
 5. Merge new cases (`CaseMerger`), write shards, rebuild the index.
 6. Synthesis (step C) when due.
 7. Vocabulary candidates (step D).
@@ -31,6 +31,8 @@ A run is never awaited by a hook. It reports progress to the Signature view stat
 The journal and history cursors of a batch are written in the same step as the cases that batch produced (step 5), so an interrupted run can never send the same evidence twice.
 
 A run's allowance is `min(tokensPerDay - tokensToday, 120,000)`. Before each model call the learner estimates the call's input tokens as characters / 3.5 and stops when the estimate plus 4,000 output tokens would exceed what is left.
+
+When the allowance is at least 40,000 tokens, history batches leave a reserve of 20,000 tokens for synthesis (step C), so traits are still produced while history remains. A smaller allowance has no reserve: history may use all of it, because a reserve would leave little or no room for history; synthesis then only runs if enough is left, so a `tokensPerDay` under 40,000 may delay traits until history is read. Below about 12,000 tokens a full batch does not fit at all. Known limit: the estimate counts each non-ASCII character as one token, so a batch of mostly non-Latin text can exceed the room left just above the threshold (an allowance up to about 49,000) and wait there until the allowance is larger. Unused tokens are not spent; the daily and per-run limits are unchanged.
 
 ## A. Session batches
 
